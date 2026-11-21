@@ -185,7 +185,26 @@ In the editor:
     rows as one; the format comes from the file extension: `.csv`,
     `.tsv`, `.json` (each optionally compressed as `.gz`, `.bz2`, `.xz`,
     `.zip`), `.parquet` and `.feather` (need `pyarrow`), `.xlsx` (needs
-    `openpyxl`). Columns are named as in the table header. With no rows
+    `openpyxl`). **Import…** (here and on the Series tab) also reads the
+    other formats pandas reads, when their engine is installed: `.jsonl`
+    and `.ndjson`, `.xml`, `.html` (first table; `lxml`), `.fwf`
+    (fixed-width text), `.xlsm`, `.xls`, `.xlsb` and `.ods`
+    (`python-calamine`, or `openpyxl`, `xlrd`, `pyxlsb`, `odfpy`), `.orc`
+    (`pyarrow`), `.h5`/`.hdf5` (`tables`; one data set), Stata `.dta`, SAS
+    `.sas7bdat` and `.xpt`, and SPSS `.sav` (`pyreadstat`); these are not
+    exported. Pickle files are refused, since loading one can run code.
+    *Settings › Data import › Missing values* (also in the panel dialog)
+    drops missing (empty or NaN) cells when a file is read, for table,
+    series and panel imports: rows (steps) or columns with any missing
+    value, or only empty ones; a series time column is never dropped.
+    Every **Import…** (table rows, *Series file…*, *Panel…*) opens a
+    dialog with the file format, the missing values choice and a row
+    range (data rows counted from 1 after the header: `1-24`, `25-`,
+    `-100`, `7`); series and panels also take a *From*/*To* date range
+    matched against the time column (inclusive; a *To* date alone takes
+    in that whole day). The row range applies first, then the dates, then
+    the missing values.
+    Columns are named as in the table header. With no rows
     selected, import appends the file's rows (missing columns take their
     defaults) and export writes every row; with rows selected, import
     replaces them with the file's rows (same columns and number of rows)
@@ -216,6 +235,34 @@ In the editor:
     `Case.solve(kind,algorithm,options)` takes the same choices (`ppedit.case.solvers()`
     lists them). A DC OPF solution has flat voltages (1 pu), no reactive
     power and no losses.
+  - **Series**: a time series of case values for multistep OPF (issue
+    #124), read with **Import…** from a data file (same formats as the
+    tables) with one row per time step: an optional label column (`time`,
+    `timestamp`, `date`, `step` or `index`) and one column per value,
+    named `bus.Pd.N` or `bus.Qd.N` (bus number `N`), `gen.Pmin.N` or
+    `gen.Pmax.N` (generator row `N`, from 1), `dcline.Pmin.N` or
+    `dcline.Pmax.N` (DC line row `N`). Values not in the file keep their
+    case values. **Import ▾ › Panel…** reads instead a file with one row
+    per step and one column per table row number (from 1; for buses the
+    row, not the bus number) or geohash cell, all giving one value chosen
+    in its dialog (e.g. bus `Pd`); the dialog's *File format* limits the
+    file chooser to one of the readable formats (or any of them; `csv`
+    and `tsv` also list each compressed form, e.g. `csv.gz`). A
+    geohash cell's value is shared among
+    the elements located in it by bus geodata (generators by their bus, DC
+    lines by their from bus): in proportion to their case values (equally
+    when those are all zero), equally, or the whole value to each; cells
+    with no element are ignored and reported. A panel can be added to the
+    current series (same number of steps), replacing that value for the
+    elements it covers. The step length (hours) is set beside it; **Export ▾**
+    and **Remove series** are undoable like other edits. The series is
+    saved in `.py` and `.json` cases (not `.glm`). With cvxopf installed,
+    **Run OPF ▾ › Multistep** solves every step as one cvxopf problem with
+    the chosen network model; the Results tab then has a step picker, the
+    horizon cost, a table of steps, and **Apply step N to case**, and the
+    diagram and solution columns show the chosen step (the diagram draws
+    the case loads). Steps are not coupled (no ramp limits or storage).
+    Generator limits by step need the default CVXOPF preparation.
   - **Results**: PF/OPF summary (with the solver used), bus voltages (and LMPs for OPF), dispatch,
     branch flows and loading, DC line flows and losses, area totals, the
     PYPOWER report, and **Apply solution to case** to copy the solved

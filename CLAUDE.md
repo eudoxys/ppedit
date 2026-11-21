@@ -243,7 +243,18 @@ API key to start sessions; tests use a fake client).
   rows with changed bus/area numbers renumbers references (two passes via
   temporary numbers so swaps work), like cell edits do; `ncost` is never
   taken from the file. Parquet/Feather/Excel depend on optional engines
-  (CI installs `pyarrow` and `openpyxl`).
+  (CI installs `pyarrow` and `openpyxl`). Import also reads the read-only
+  pandas formats of `_FORMATS` (`writable` False; `table_read_formats`,
+  meta `table_read_formats`) when their engine is installed (CI installs
+  them; `xlwt` only writes `.xls` test files). `.xlsb` and `.sas7bdat` have
+  no Python writer, so they are untested; pyreadstat's XPORT zero reads
+  back as about 5e-79 in pandas. `make docs` runs `pip install .`, which
+  replaces an editable install: reinstall with `pip install -e .` after it.
+  `dropna` (`_dropna` in `_tableio.py`; `S.dropna`, `dropnaSelect` in
+  `app.js`) works on the plain rows after reading, with `None` as missing.
+  Row and date ranges (`_row_range`, `_date_range`) run before it; every
+  import goes through `openImportDialog(mode)` (`S.importChoice` keeps the
+  choices, `S.importReq` carries them to `importRows`/`importSeries`).
 
 - Extended result columns (decision #56, issue #108): `RESULT_COLUMNS` in
   `case.py` (PYPOWER array indexes), `extended` of `Case.solve`
@@ -252,6 +263,26 @@ API key to start sessions; tests use a fake client).
   (`Editor.extended` in `server.py`, `extended` of `dump_rows`);
   `Case.import_rows` drops columns with their names (`ignored`).
   `S.tableSort` column indexes past `COLUMNS[table]` refer to them.
+
+- Time series and multistep OPF (decision #59, issue #124): `Case.series`
+  (`set_series`, `_series_rekey` keeps columns valid on edits, `at_step`,
+  `_series_input`), `read_series`/`dump_series` in `_tableio.py`,
+  `/api/series*` routes, `renderSeries` and `stepView`/`setStep` in
+  `app.js`, `series` argument of `_cvxopf.runopf`. Per-step generator
+  limits are CVXPY constraints ppedit appends after `build_opf_multistep`
+  (`_gen_limits`; it replaces `build.prob`), because cvxopf has no
+  time-varying generator limits as of cvxopf fd4d279 (2026-11-18); they
+  only work with the default preparation (the prepared solve rebuilds the
+  problem). Switch to cvxopf's own input if it adds one. The diagram still
+  draws case loads for a multistep step. Panels (decision #60,
+  `Case.set_series_panel`, `geohash` in `case.py`, `panel` of
+  `/api/series/import`, `openPanelDialog` in `app.js`) locate elements by
+  the first geodata row of their bus and match geohash cells by prefix of a
+  12-digit geohash computed from LAT/LON (not the `GEOHASH` geodata tag some
+  examples carry). Full AC multistep memory grows
+  with the horizon inside cvxopf (case118: about 0.5 GB per step, the same
+  with or without `automatic_sparse_dispatch`; 24 steps did not fit in
+  7 GB), while the DC models are light (case118, 24 steps: about 1 s).
 
 - Claude tab (`ppedit/claude.py`, `renderClaude` in `app.js`): sessions
   call the Messages API with `urllib` (no SDK dependency) in background

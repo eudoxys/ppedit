@@ -12,6 +12,7 @@ const S = {
   resSort: {},         // Results table title -> {col, dir} (see block)
   tableSort: {},       // case table -> {col, dir} (see tableOrder)
   claude: null,        // Claude sessions from /api/claude
+  step: 0,             // step of a multistep solution shown (issue #124, stepView)
   issueOpen: null,     // message of the solver warning whose detail is open (Issues tab)
   pos: {},             // bus_i -> {x, y}
   zoom: { k: 1, x: 0, y: 0 },
@@ -76,6 +77,28 @@ function loadCvxopf() {
   catch (_) { return { ...CVXOPF_DEFAULTS }; }
 }
 S.cvxopf = loadCvxopf();
+// Missing values on import (dropna of /api/table/import and /api/series/import):
+// "" keeps them; saved in localStorage (ppedit.dropna) and sent with every import
+const DROPNA_CHOICES = [["", "Keep them"], ["rows", "Drop rows (steps) with any missing value"],
+  ["columns", "Drop columns with any missing value"], ["empty-rows", "Drop only empty rows (steps)"],
+  ["empty-columns", "Drop only empty columns"]];
+S.dropna = (() => { try { return localStorage.getItem("ppedit.dropna") || ""; } catch (_) { return ""; } })();
+function setDropna(value) {
+  S.dropna = value;
+  try { localStorage.setItem("ppedit.dropna", value); } catch (_) { /* storage unavailable */ }
+}
+function dropnaSelect(id) {
+  return h("select", { id, "aria-label": "Missing values when importing", onchange: e => { setDropna(e.target.value); if (S.view === "settings") renderSettings(); } },
+    DROPNA_CHOICES.map(([v, t]) => h("option", { value: v, selected: v === S.dropna }, t)));
+}
+// "; dropped 2 row(s) and column(s) a, b with missing values" or ""
+function droppedText(d) {
+  if (!d || (!d.rows && !d.columns.length)) return "";
+  const parts = [];
+  if (d.rows) parts.push(`${d.rows} row(s)`);
+  if (d.columns.length) parts.push(`column(s) ${d.columns.slice(0, 5).join(", ")}${d.columns.length > 5 ? ", …" : ""}`);
+  return `; dropped ${parts.join(" and ")} with missing values`;
+}
 // "max_iter=500, tol=1e-8, mu_strategy=adaptive" -> {max_iter: 500, tol: 1e-8, mu_strategy: "adaptive"};
 // numbers and true/false are converted, other values stay text; throws on a malformed item
 function parseSolverOptions(text) {
@@ -129,7 +152,7 @@ const BUSY_LABELS = [  // [path prefix, label], first match wins
   ["/api/solve", "Solving"], ["/api/open", "Opening case"], ["/api/new", "Loading case"],
   ["/api/save", "Saving"], ["/api/geodata", "Loading geodata"], ["/api/table/import", "Importing rows"],
   ["/api/table/export", "Exporting rows"], ["/api/folders", "Listing folders"], ["/api/state", "Loading"],
-  ["/api/meta", "Loading"],
+  ["/api/meta", "Loading"], ["/api/series/import", "Importing series"], ["/api/series/export", "Exporting series"],
 ];
 const busy = { items: new Map([[0, { label: "Loading", t0: performance.now() }]]), next: 1, timer: null, tick: null };
 function busyLabel(path) { return (BUSY_LABELS.find(([p]) => path.startsWith(p)) || [null, "Working"])[1]; }
@@ -209,6 +232,7 @@ function toast(msg, error = false) {
 
 function setState(st) {
   const prev = S.state;
+  st.result = stepView(st.result);
   S.state = st;
   const c = st.case;
   // drop selections that no longer exist
@@ -261,6 +285,12 @@ function renderChrome() {
     if (document.activeElement !== el) el.value = el.id === "baseMVA" ? c.baseMVA : c.version;
   }
   for (const t of S.meta.tables) $(`[data-count="${t}"]`).textContent = c.tables[t].length;
+  $("#series-count").textContent = c.series ? c.series.values.length : "";
+  $$("#opf-menu [data-multistep]").forEach(b => {
+    b.disabled = !c.series;
+    b.title = c.series ? `Solve the ${c.series.values.length} steps of the time series as one OPF`
+      : "Import a time series on the Series tab first";
+  });
   // Issues tab: case issues plus the last solve's messages (issue #89); red
   // dot for errors, yellow for warnings only
   const msgs = solverMessages();
@@ -300,6 +330,7 @@ function renderView() {
   if (isTable) { $("#view-table").classList.add("active"); renderTable(S.view); }
   else if (S.view === "network") { $("#view-network").classList.add("active"); renderNetwork(); }
   else if (S.view === "results") { $("#view-results").classList.add("active"); renderResults(); }
+  else if (S.view === "series") { $("#view-series").classList.add("active"); renderSeries(); }
   else if (S.view === "claude") { $("#view-claude").classList.add("active"); renderClaude(); }
   else if (S.view === "settings") { $("#view-settings").classList.add("active"); renderSettings(); }
   else { $("#view-issues").classList.add("active"); renderIssues(); }
@@ -325,6 +356,11 @@ function renderSettings() {
   $("#precision-settings").replaceChildren(...rows,
     h("div", { class: "hint" }, "Decimal places shown in the case tables; blank shows full precision. A value of exactly 0 shows as 0. Editing a cell shows its full value."),
     h("div", {}, h("button", { onclick: () => { S.precision = { ...PRECISION_DEFAULTS }; save(); renderSettings(); } }, "Reset to defaults")));
+  $("#import-settings").replaceChildren(
+    h("label", {}, h("span", {}, "Missing values"), dropnaSelect("dropna-setting")),
+    h("div", { class: "hint" }, "Applied when table rows, a series file or a panel are read (Import…), before the data is checked. "
+      + "“Any missing value” drops a row or column with at least one empty or NaN cell; “empty” drops only those with no value at all. "
+      + "In series files the time column is never dropped and a missing time does not count."));
   renderCvxopfSettings();
 }
 
@@ -368,6 +404,158 @@ function renderCvxopfSettings() {
 }
 
 // ---------------------------------------------------------------- tables
+
+// ---------------------------------------------------------------- series
+
+// Series tab (issue #124): the case time series (state.case.series) of bus
+// Pd/Qd, generator and DC line Pmin/Pmax by step, used by the Run OPF ▾
+// multistep solvers. Read from a data file (one row per step), shown read only.
+const SERIES_SHOW = 500;  // most steps listed
+function seriesTitle(name) {
+  const [table, column, key] = name.split(".");
+  const c = S.state.case, unit = column === "Qd" ? "MVAr" : "MW";
+  if (table === "bus") return `bus ${key} ${column} (${unit})`;
+  const row = c.tables[table][+key - 1];
+  return `${TABLE_TITLES[table]} ${key}` + (row ? (table === "gen" ? ` at bus ${row[0]}` : ` ${row[0]}–${row[1]}`) : "") + ` ${column} (${unit})`;
+}
+function renderSeries() {
+  const ser = S.state.case.series, exts = S.meta.table_formats || [];
+  const item = x => h("button", { "data-action": "series-export", "data-format": x, role: "menuitem" }, x.slice(1));
+  $("#series-export-menu").replaceChildren(h("div", { class: "sep" }, "Export as"), ...exts.map(item));
+  $("#series-input").accept = readFormats().join(",");
+  $("#series-export-btn").disabled = $("#series-clear").disabled = !ser;
+  const d = $("#series-delta");
+  d.disabled = !ser;
+  if (document.activeElement !== d) d.value = ser ? ser.delta : "";
+  $("#series-hint").textContent = ser
+    ? `${ser.values.length} step(s) × ${ser.columns.length} value(s), ${fmt(ser.values.length * ser.delta, 6).replace(/\.?0+$/, "")} h in all`
+    : "";
+  const format = h("div", { class: "hint series-format" },
+    "A series file has one row per time step: an optional label column (named time, timestamp, date, step or index) ",
+    "and one column per value named table.column.key — bus.Pd.N and bus.Qd.N for bus number N, gen.Pmin.N and gen.Pmax.N ",
+    "for generator row N, dcline.Pmin.N and dcline.Pmax.N for DC line row N (rows counted from 1). Values not in the file keep ",
+    "their case values at every step. Import ▾ › Panel… reads instead a file with one column per table row number or geohash cell, ",
+    "all for one value chosen in its dialog (e.g. bus Pd). Run OPF ▾ › Multistep solves all steps as one cvxopf problem; the Results tab then shows one step at a time. ",
+    "The series is saved with .py and .json cases (not .glm).");
+  if (!ser) {
+    $("#series-body").replaceChildren(h("div", { class: "empty" }, h("div", { class: "big" }, "No time series"),
+      exts.length ? "Import a CSV, Excel or other data file with the values by step." : TABLE_IO_NONE), format);
+    return;
+  }
+  const rows = ser.values.slice(0, SERIES_SHOW).map((v, t) => h("tr", {}, h("td", { class: "rowhead" }, t + 1),
+    h("td", {}, ser.index[t]), ...v.map(x => h("td", { class: "num" }, fmt(x, S.precision.MW ?? 6)))));
+  $("#series-body").replaceChildren(format, h("div", { class: "table-wrap" }, h("table", { class: "series-table" },
+    h("thead", {}, h("tr", {}, h("th", { class: "rowhead" }, "#"), h("th", {}, "time"),
+      ...ser.columns.map(n => h("th", { title: seriesTitle(n) }, n)))),
+    h("tbody", {}, rows))),
+    ...(ser.values.length > SERIES_SHOW ? [h("div", { class: "hint" }, `First ${SERIES_SHOW} of ${ser.values.length} steps shown; export the series to see them all.`)] : []));
+}
+async function importSeries(file) {
+  const data = await fileBase64(file), opt = S.importReq || {}, panel = opt.panel;
+  S.importReq = null;
+  const req = { filename: file.name, data, dropna: S.dropna, range: opt.range || "", start: opt.start || "", end: opt.end || "" };
+  if (panel) req.panel = panel;
+  const st = await act("/api/series/import", req);
+  const im = st.imported;
+  if (!panel) return toast(`Read ${im.steps} step(s) of ${im.columns} value(s) from ${file.name}${selectedText(im.selected)}${droppedText(im.dropped)} (Ctrl+Z to undo)`);
+  const extra = selectedText(im.selected) + droppedText(im.dropped) + (im.ignored.length ? `; ${im.ignored.length} cell(s) with no ${panel.table} ignored (${im.ignored.slice(0, 5).join(", ")}${im.ignored.length > 5 ? ", …" : ""})` : "")
+    + (im.unlocated ? `; ${im.unlocated} ${panel.table} row(s) without geodata left out` : "");
+  toast(`Read ${panel.table} ${panel.column} for ${im.steps} step(s) from ${im.keys} column(s) of ${file.name}; the series has ${im.columns} value(s)${extra} (Ctrl+Z to undo)`);
+}
+
+// file extensions the server reads (table and series import), compressed forms included
+function readFormats() {
+  return S.meta.table_read_formats || S.meta.table_formats || [];
+}
+const TABLE_FORMAT_NAMES = {
+  ".csv": "comma-separated", ".tsv": "tab-separated", ".json": "JSON records", ".jsonl": "JSON lines", ".ndjson": "JSON lines",
+  ".parquet": "Parquet", ".feather": "Feather", ".orc": "ORC", ".xlsx": "Excel", ".xlsm": "Excel with macros", ".xls": "Excel 97-2003",
+  ".xlsb": "Excel binary", ".ods": "OpenDocument", ".xml": "XML", ".html": "HTML table", ".htm": "HTML table", ".fwf": "fixed-width text",
+  ".h5": "HDF5", ".hdf5": "HDF5", ".hdf": "HDF5", ".dta": "Stata", ".sas7bdat": "SAS", ".xpt": "SAS transport", ".sav": "SPSS",
+};
+
+// Import dialog for table rows ("table"), series files ("series") and panels
+// ("panel"; Case.set_series_panel: steps in rows, one column per row number
+// or geohash cell, all giving the chosen table value). Shared choices: file
+// format (the file chooser's filter), missing values (S.dropna) and a row
+// range; series and panels also take a date range of the time column. The
+// choices are kept in S.importChoice; S.importReq holds them until the file
+// is picked.
+const IMPORT_TITLES = { table: "Import table rows", series: "Import a series file", panel: "Import a panel" };
+function openImportDialog(mode) {
+  const d = $("#panel-dialog"), ser = S.state.case.series, prev = S.importChoice || {};
+  const tables = { bus: ["Pd", "Qd"], gen: ["Pmin", "Pmax"], dcline: ["Pmin", "Pmax"] };
+  const sel = (id, opts, value) => h("select", { id }, opts.map(([v, t]) => h("option", { value: v, selected: v === value }, t)));
+  const table = sel("panel-table", Object.keys(tables).map(t => [t, TABLE_TITLES[t]]), prev.table || "bus");
+  const column = h("select", { id: "panel-column" });
+  const fill = () => column.replaceChildren(...tables[table.value].map(c => h("option", { value: c, selected: c === prev.column }, c)));
+  table.addEventListener("change", fill); fill();
+  const keys = sel("panel-keys", [["auto", "Automatic (digits: rows)"], ["row", "Row numbers (from 1)"], ["geohash", "Geohashes"]], prev.keys || "auto");
+  const split = sel("panel-split", [["proportional", "In proportion to case values"], ["equal", "Equally"], ["copy", "Whole value to each"]], prev.split || "proportional");
+  const merge = h("input", { type: "checkbox", id: "panel-merge", checked: !!ser, disabled: !ser });
+  // file format: limits the file chooser to one format (and its compressed forms)
+  // csv and tsv also list each compressed form (csv.gz, tsv.zip, ...) as a choice of its own
+  const ZIP = { ".gz": "gzip", ".bz2": "bzip2", ".xz": "xz", ".zip": "zip", ".zst": "zstd" };
+  const listed = readFormats().filter(x => x.split(".").length === 2 || /^\.(csv|tsv)\./.test(x));
+  const named = x => {
+    const [base, zip] = [x.replace(/(\.[^.]+)$/, m => ZIP[m] && x.split(".").length > 2 ? "" : m), x.match(/\.[^.]+$/)[0]];
+    const name = TABLE_FORMAT_NAMES[base] || "";
+    return `${x.slice(1)}${name || base !== x ? ` (${[name, base !== x ? `${ZIP[zip]} compressed` : ""].filter(Boolean).join(", ")})` : ""}`;
+  };
+  const format = sel("panel-format", [["", "Any supported format"], ...listed.map(x => [x, named(x)])],
+    listed.includes(prev.format) ? prev.format : "");
+  const text = (id, value, placeholder) => h("input", { id, class: "text", value: value || "", placeholder, spellcheck: "false" });
+  const range = text("import-range", prev.range, "all, or e.g. 1-24, 25-, -100");
+  const start = text("import-start", prev.start, "e.g. 2026-07-01 or 2026-07-01 06:00");
+  const end = text("import-end", prev.end, "e.g. 2026-07-07 (whole day)");
+  const label = (txt, el, hint) => h("label", { class: "panel-row" }, h("span", {}, txt), el, hint ? h("span", { class: "hint" }, hint) : null);
+  const go = h("button", { class: "primary", onclick: () => {
+    const c = S.importChoice = { ...prev, format: format.value, range: range.value.trim() };
+    if (mode !== "table") Object.assign(c, { start: start.value.trim(), end: end.value.trim() });
+    if (mode === "panel") Object.assign(c, { table: table.value, column: column.value, keys: keys.value, split: split.value });
+    S.importReq = { mode, range: c.range, start: mode === "table" ? "" : c.start, end: mode === "table" ? "" : c.end,
+      panel: mode === "panel" ? { table: c.table, column: c.column, keys: c.keys, split: c.split, merge: merge.checked } : null };
+    d.close();
+    const input = $(mode === "table" ? "#table-input" : "#series-input");
+    // a base format admits its compressed forms too; a compressed choice only itself
+    input.accept = (format.value ? readFormats().filter(x => x === format.value
+      || (format.value.split(".").length === 2 && x.startsWith(format.value + ".")))
+      : readFormats()).join(",");
+    input.click();
+  } }, "Choose file…");
+  const what = mode === "table" ? (S.selected[S.view]?.size
+      ? `The rows read replace the ${S.selected[S.view].size} selected ${TABLE_TITLES[S.view]} row(s) (same number of rows).`
+      : `The rows read are appended to the ${TABLE_TITLES[S.view]} table; columns are named as in its header.`)
+    : mode === "series" ? "A series file has one row per time step (an optional time column first) and one column per value named table.column.key (e.g. bus.Pd.5). It replaces the current series."
+    : "A panel file has one row per time step (an optional time column first) and one column per table row number (counted from 1; for buses the row, not the bus number) or geohash cell. Every column gives the value chosen here.";
+  d.replaceChildren(h("h2", { id: "panel-title" }, IMPORT_TITLES[mode]), h("p", { class: "summary" }, what),
+    ...(mode === "panel" ? [label("Table", table), label("Value", column), label("Columns are", keys),
+      label("Share a geohash cell", split, "among the elements located in it (by bus geodata)")] : []),
+    label("File format", format, "the formats the server can read; the file chooser shows only the one chosen"),
+    label("Rows", range, "data rows to read, counted from 1 after the header (blank: all)"),
+    ...(mode !== "table" ? [label("From", start), label("To", end, "steps whose time lies in this range, inclusive (blank: no limit); needs a time column of dates")] : []),
+    label("Missing values", dropnaSelect("panel-dropna"), "dropped when the file is read (also on the Settings tab)"),
+    ...(mode === "panel" ? [label("Add to the current series", merge, ser ? `same number of steps (${ser.values.length}); replaces this value for the elements in the panel` : "no series yet")] : []),
+    h("div", { class: "close-row" }, h("button", { onclick: () => d.close() }, "Cancel"), go));
+  d.showModal();
+  go.focus();
+}
+// "; rows 1-24 of 8760 read" style note, or ""
+function selectedText(sel) {
+  return sel ? `; ${sel.rows} of ${sel.of} row(s) selected` : "";
+}
+async function exportSeries(ext) {
+  const id = busyStart("/api/series/export");
+  try {
+    const res = await fetch("/api/series/export?" + new URLSearchParams({ format: ext.replace(/^\./, "") }));
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+    const name = ((res.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/) || [])[1] || "series" + ext;
+    const url = URL.createObjectURL(await res.blob());
+    const a = h("a", { href: url, download: name });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (err) { toast(err.message, true); } finally { busyEnd(id); }
+}
 
 function cellEditor(table, row, col, value) {
   const spec = S.meta.columns[table][col];
@@ -513,7 +701,7 @@ function updateTableHint() {
   $("#import-btn").disabled = $("#export-btn").disabled = none;
   $("#import-btn").title = none ? TABLE_IO_NONE : n
     ? `Replace the ${n} selected row(s) with the rows of a data file (same columns, same number of rows)`
-    : "Append the rows of a data file (CSV, Parquet, Excel, …; columns named as in this table)";
+    : `Append the rows of a data file (${(S.meta.table_read_formats || []).filter(x => x.split(".").length === 2).map(x => x.slice(1)).join(", ")}; columns named as in this table)`;
   $("#export-btn").title = none ? TABLE_IO_NONE : (n ? `Download the ${n} selected row(s) as a data file` : "Download all rows as a data file")
     + (extendedColumns(t).cols.length ? ", with the solution columns shown" : "");
   const head = $("#export-menu .sep");
@@ -599,7 +787,7 @@ function renderExportMenu() {
   $("#export-menu").replaceChildren(h("div", { class: "sep" }, "Export as"),
     ...exts.filter(x => x.split(".").length === 2).map(x => h("div", { class: "fmt" }, item(x, x.slice(1)),
       ...exts.filter(y => y.startsWith(x + ".")).map(y => item(y, y.slice(x.length), `${y.slice(1)} (compressed)`)))));
-  $("#table-input").accept = exts.join(",");
+  $("#table-input").accept = (S.meta.table_read_formats || exts).join(",");
 }
 
 function fileBase64(file) {
@@ -615,10 +803,12 @@ async function importRows(file) {
   const table = S.view;
   const rows = [...S.selected[table]].sort((a, b) => a - b);
   const data = await fileBase64(file);
-  const st = await act("/api/table/import", { table, filename: file.name, data, rows });
+  const opt = S.importReq || {};
+  S.importReq = null;
+  const st = await act("/api/table/import", { table, filename: file.name, data, rows, dropna: S.dropna, range: opt.range || "" });
   const r = st.imported, what = TABLE_TITLES[table];
   // solution columns written by export (decision #56) are not case data
-  const ign = r.ignored && r.ignored.length ? `; solution column(s) ${r.ignored.join(", ")} ignored` : "";
+  const ign = (r.ignored && r.ignored.length ? `; solution column(s) ${r.ignored.join(", ")} ignored` : "") + selectedText(r.selected) + droppedText(r.dropped);
   if (r.added) {
     toast(`Appended ${r.added} ${what} row(s) from ${file.name}${ign} (Ctrl+Z to undo)`);
     flashRow(S.state.case.tables[table].length - 1);
@@ -2666,6 +2856,40 @@ function sourceReport() {
       : h("div", { class: "hint" }, "Everything in the file was read."));
 }
 
+// A multistep solution (result.steps, issue #124) is shown one step at a time:
+// the step's rows replace the first step's, so the diagram, tables and
+// Results tab all show S.step. `base` keeps the whole solution.
+function stepView(r) {
+  if (!r || !(r.base || r).steps) return r;
+  const base = r.base || r, n = base.steps.length;
+  const k = S.step = Math.max(0, Math.min(n - 1, S.step));
+  return { ...base, ...base.steps[k], base, step: k, stepLog: base.steps[k].log, log: base.log };
+}
+function setStep(k) {
+  S.step = k;
+  S.state.result = stepView(S.state.result);
+  renderView();
+}
+function stepPicker(r) {
+  const n = r.steps.length, m = r.multistep;
+  const sel = h("select", { "aria-label": "Time step shown", onchange: e => setStep(+e.target.value) },
+    r.steps.map((s, i) => h("option", { value: i, selected: i === r.step }, `${i + 1}: ${s.label}`)));
+  return h("div", { class: "step-picker" },
+    h("span", {}, "Step"),
+    h("button", { title: "Previous step", disabled: r.step === 0, onclick: () => setStep(r.step - 1) }, "◀"),
+    sel,
+    h("button", { title: "Next step", disabled: r.step === n - 1, onclick: () => setStep(r.step + 1) }, "▶"),
+    h("span", { class: "hint" }, `of ${n}, ${m.delta} h each; the diagram and table solution columns show this step (loads drawn on the diagram are the case values; see the Series tab)`));
+}
+function stepTable(r) {
+  const rows = r.steps.map((s, i) => {
+    const pg = s.gen.reduce((a, g) => a + g.Pg, 0), pd = (s.areas || []).reduce((a, x) => a + x.Pd, 0);
+    return [i + 1, s.label, fmt(s.objective, 2), fmt(pg, 2), fmt(pd, 2), fmt(s.losses_MW, 2)];
+  });
+  return block("Steps", ["step", "time", "cost $/h", "Pg MW", "Pd MW", "loss MW"], rows,
+    r.steps.map((_, i) => i === r.step ? Array(6).fill("current") : []), "wide");
+}
+
 function renderResults() {
   const box = $("#view-results");
   const r = S.state.result;
@@ -2676,22 +2900,25 @@ function renderResults() {
     return;
   }
   const c = S.state.case;
-  const kind = (r.kind === "pf" ? "Power flow" : r.dc ? "DC optimal power flow" : "Optimal power flow")
+  const kind = (r.multistep ? "Multistep " : "") + (r.kind === "pf" ? "Power flow" : r.dc ? "DC optimal power flow" : "Optimal power flow")
     + (r.solver ? ` (${r.solver.replace(/^(AC|DC): /, "")})` : "");
   const totalPg = r.gen.reduce((s, g) => s + g.Pg, 0);
-  const totalPd = c.tables.bus.reduce((s, b) => s + b[2], 0);
+  // a multistep step has its own loads: sum them from its area rows
+  const totalPd = r.multistep ? (r.areas || []).reduce((s, a) => s + a.Pd, 0) : c.tables.bus.reduce((s, b) => s + b[2], 0);
   const cards = h("div", { class: "cards" },
     card(kind, r.success ? "Converged" : "Failed", r.success ? "ok" : "fail"),
     r.success ? card("Generation", `${fmt(totalPg, 1)} MW`) : null,
     r.success ? card("Load", `${fmt(totalPd, 1)} MW`) : null,
     r.success ? card("Losses", `${fmt(r.losses_MW, 2)} MW` + (r.dcline && r.dcline.length ? ` (DC ${fmt(r.dcline_losses_MW, 2)})` : "")) : null,
     r.objective !== null && r.success ? card("Cost", `${fmt(r.objective, 2)} $/h`) : null,
-    r.success ? card("Vm range", `${fmt(Math.min(...r.bus.map(b => b.Vm)), 3)} – ${fmt(Math.max(...r.bus.map(b => b.Vm)), 3)}`) : null);
-  const kids = [cards];
+    r.success ? card("Vm range", `${fmt(Math.min(...r.bus.map(b => b.Vm)), 3)} – ${fmt(Math.max(...r.bus.map(b => b.Vm)), 3)}`) : null,
+    r.multistep && r.success && r.horizon_objective !== null ? card("Horizon cost", `${fmt(r.horizon_objective, 2)} $ over ${r.steps.length} step(s)`) : null);
+  const kids = r.multistep ? [stepPicker(r), cards] : [cards];
   if (r.success) {
     kids.push(h("div", { style: "margin-bottom:12px" },
-      h("button", { onclick: () => act("/api/apply").then(() => toast("Solution copied into bus Vm/Va, generator Pg/Qg and DC line flows")) },
-        "Apply solution to case"),
+      h("button", { onclick: () => act("/api/apply", r.multistep ? { step: r.step } : {})
+        .then(() => toast("Solution copied into bus Vm/Va, generator Pg/Qg and DC line flows" + (r.multistep ? ` (step ${r.step + 1})` : ""))) },
+        r.multistep ? `Apply step ${r.step + 1} to case` : "Apply solution to case"),
       h("span", { class: "hint", style: "margin-left:10px" }, "copies Vm, Va, Pg, Qg and DC line Pf, Pt, Qf, Qt into the case (undoable)")));
     const busRows = r.bus.map(b => [b.bus_i, fmt(b.Vm, 4), fmt(b.Va, 3)].concat(r.kind === "opf" ? [fmt(b.lam_P, 3)] : []));
     const busCls = r.bus.map((b, i) => {
@@ -2714,9 +2941,11 @@ function renderResults() {
       r.areas && (r.areas.length > 1 || c.tables.areas.length) ? block("Areas", ["area", "name", "buses", "Pg MW", "Pd MW", "shunt MW", "loss MW", "export MW", "ref bus"]
         .concat(r.kind === "opf" ? ["price $/MWh"] : []),
         r.areas.map(a => [a.area, a.name || "–", a.buses, fmt(a.Pg, 2), fmt(a.Pd, 2), fmt(a.shunt_MW, 2), fmt(a.losses_MW, 2), fmt(a.export_MW, 2), a.price_ref_bus ?? "–"]
-          .concat(r.kind === "opf" ? [fmt(a.lam_P, 3)] : [])), [], "wide") : null));
+          .concat(r.kind === "opf" ? [fmt(a.lam_P, 3)] : [])), [], "wide") : null,
+      r.multistep ? stepTable(r) : null));
   }
-  kids.push(h("details", { open: !r.success }, h("summary", {}, "Solver report"), h("pre", { class: "log" }, r.log || "(no output)")));
+  kids.push(h("details", { open: !r.success }, h("summary", {}, "Solver report"),
+    h("pre", { class: "log" }, (r.log || "(no output)") + (r.stepLog ? "\n" + r.stepLog : ""))));
   if (report) kids.push(report);
   box.replaceChildren(...kids);
 }
@@ -3021,9 +3250,9 @@ async function onAction(btn) {
       trigger.title = SOLVING;
       renderChrome();
       try {
-        await act("/api/solve", solveRequest(btn.dataset.kind, btn.dataset.algorithm));
+        await act("/api/solve", solveRequest(btn.dataset.kind, btn.dataset.algorithm, !!btn.dataset.multistep));
         const r = S.state.result;
-        const what = (r.dc ? "DC " : "") + r.kind.toUpperCase() + (r.solver ? ` (${r.solver.replace(/^(AC|DC): /, "")})` : "");
+        const what = (r.multistep ? `${r.steps ? r.steps.length : ""}-step ` : "") + (r.dc ? "DC " : "") + r.kind.toUpperCase() + (r.solver ? ` (${r.solver.replace(/^(AC|DC): /, "")})` : "");
         const nwarn = (r.messages || []).filter(m => m.level === "warning").length;
         toast(r.success ? `${what} converged` + (nwarn ? ` with ${nwarn} warning(s) — see Issues` : "")
           : `${what} did not converge — see Issues and Results`, !r.success);
@@ -3039,7 +3268,7 @@ async function onAction(btn) {
     else if (a === "add-row") await addRow();
     else if (a === "dup-row") await duplicateRows();
     else if (a === "del-rows") await deleteRows();
-    else if (a === "import-rows") $("#table-input").click();
+    else if (a === "import-rows") openImportDialog("table");
     else if (a === "export-rows") await exportRows(btn.dataset.format);
     else if (a === "relayout") { if (S.style === "oneline") olCache = null; else layout(true); fitView(); renderNetwork(); }
     else if (a === "fit") { fitView(); renderNetwork(); }
@@ -3053,6 +3282,12 @@ async function onAction(btn) {
     else if (a === "geodata-export") downloadUrl("/api/export?format=csv");
     else if (a === "geodata-clear") {
       if (confirm("Remove the geodata (bus locations) from this case? Undo restores it.")) { await act("/api/geodata", { clear: true }); needFit = true; renderNetwork(); }
+    }
+    else if (a === "series-import") openImportDialog("series");
+    else if (a === "series-panel") openImportDialog("panel");
+    else if (a === "series-export") await exportSeries(btn.dataset.format);
+    else if (a === "series-clear") {
+      if (confirm("Remove the time series from this case? Undo restores it.")) await act("/api/series", { clear: true });
     }
     else if (a === "claude-new") await newClaudeSession();
     else if (a === "exit") await exitServer();
@@ -3267,10 +3502,11 @@ function showRestart() {
 }
 
 // /api/solve request; CVXOPF-* solvers get the solve options from the Settings tab
-function solveRequest(kind, algorithm) {
+function solveRequest(kind, algorithm, multistep = false) {
   const req = { kind };
   if (algorithm) req.algorithm = algorithm;
   if (kind === "opf" && algorithm && algorithm.startsWith("CVXOPF-")) req.options = cvxopfOptions();
+  if (multistep) req.multistep = true;
   return req;
 }
 
@@ -3280,10 +3516,17 @@ function buildSolverMenus() {
   const item = (kind, x) => h("button", { "data-action": "solve", "data-kind": kind, "data-algorithm": x.algorithm, role: "menuitem" }, x.label);
   $("#pf-menu").replaceChildren(...S.meta.solvers.pf.map(x => item("pf", x)));
   const opf = S.meta.solvers.opf;
+  // Multistep (issue #124): the cvxopf solvers over the case time series
+  const multi = opf.filter(x => x.algorithm.startsWith("CVXOPF-")).map(x => {
+    const b = item("opf", { ...x, label: x.label.replace(/^(AC|DC): CVXOPF ?/, "").replace(/^\((IPOPT)\)$/, "full AC ($1)") || x.label });
+    b.dataset.multistep = "1";
+    b.textContent = `${x.dc ? "DC" : "AC"}: ${b.textContent}`;
+    return b;
+  });
   $("#opf-menu").replaceChildren(...[["AC OPF", false], ["DC OPF", true]].flatMap(([title, dc]) => {
     const rows = opf.filter(x => x.dc === dc);
     return rows.length ? [h("div", { class: "sep" }, title), ...rows.map(x => item("opf", { ...x, label: x.label.replace(/^(AC|DC): /, "") }))] : [];
-  }));
+  }), ...(multi.length ? [h("div", { class: "sep" }, "Multistep (CVXOPF, Series tab)"), ...multi] : []));
 }
 
 // About dialog: package metadata from /api/meta `about` (ppedit.server.about),
@@ -3367,6 +3610,13 @@ async function init() {
     const f = e.target.files[0]; e.target.value = "";
     if (f) importRows(f).catch(() => { /* toast already shown */ });
   });
+  $("#series-input").addEventListener("change", e => {
+    const f = e.target.files[0]; e.target.value = "";
+    if (f) importSeries(f).catch(() => { /* toast already shown */ });
+  });
+  const delta = $("#series-delta");
+  delta.addEventListener("change", () => act("/api/series", { delta: delta.value }).catch(() => renderSeries()));
+  delta.addEventListener("keydown", e => { if (e.key === "Enter") delta.blur(); });
   $("#geodata-input").addEventListener("change", e => {
     const f = e.target.files[0]; e.target.value = "";
     if (f) loadGeodata(f).catch(() => { /* toast already shown */ });
