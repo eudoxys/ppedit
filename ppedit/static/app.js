@@ -1728,6 +1728,31 @@ function updateLabelMenu() {
   }
 }
 
+// Bus symbol in the classic or simple style (not one-line), centered on 0,0:
+// the shapes of a bus node without its labels, its radius `r` (labels are
+// placed from it) and whether it is drawn as isolated. Used by the diagram and
+// by the icons of #bus-menu (issue #141).
+function busSymbol(b, sum, classic, nbus) {
+  const v = sum.volt.get(b[0]);
+  const hasGen = sum.ngen.get(b[0]) > 0, hasLoad = b[2] !== 0 || b[3] !== 0;
+  const shapes = [];
+  let r, isolated = false;
+  if (classic) {
+    isolated = b[1] === 4 || (nbus > 1 && !sum.conn.has(b[0]));
+    const fill = isolated ? "none" : vColor(v.Vm);
+    if (hasGen) { r = 8; shapes.push(sv("circle", { r, class: "body dl-body", fill })); }
+    else if (hasLoad) { r = 9; shapes.push(sv("path", { d: `M0,${-r} L${r * 0.95},${r * 0.7} L${-r * 0.95},${r * 0.7} Z`, class: "body dl-body", fill })); }
+    else { r = 6.5; shapes.push(sv("rect", { x: -r, y: -r, width: 2 * r, height: 2 * r, class: "body dl-body", fill })); }
+    if (b[1] === 3) shapes.push(sv("circle", { r: r + 4, class: "ref-ring" }));
+  } else {
+    r = b[1] === 3 ? 9 : 7;
+    if (hasGen) shapes.push(sv("circle", { r: r + 4, class: "gen" }));
+    shapes.push(sv("circle", { r, class: "body dl-body", fill: sum.res ? vColor(v.Vm) : TYPE_COLOR[b[1]] || "#999" }));
+    if (b[2] > 0) shapes.push(sv("path", { d: `M${r + 2},${r + 1} l6,6 m-3,0 h3 v-3`, class: "load" }));
+  }
+  return { r, shapes, isolated };
+}
+
 function renderNetwork() {
   updateNetTools();
   if (S.style === "oneline") return renderOneline();
@@ -1861,7 +1886,7 @@ function renderNetwork() {
     if (G && G.estimated.has(b[0])) cls.push("nogeo");
     const node = sv("g", { class: cls.join(" "), transform: `translate(${p.x},${p.y})`, "data-bus": b[0], "data-owner": b[0] });
     const v = sum.volt.get(b[0]);
-    const hasGen = sum.ngen.get(b[0]) > 0, hasLoad = b[2] !== 0 || b[3] !== 0;
+    const hasGen = sum.ngen.get(b[0]) > 0;
     if (areas) {
       if (priceRef.has(b[0])) {
         const star = sv("text", { x: -15, y: -9, class: "area-star", "text-anchor": "middle" });
@@ -1869,18 +1894,11 @@ function renderNetwork() {
         node.append(star);
       }
     }
-    let r;
+    const sym = busSymbol(b, sum, classic, c.tables.bus.length), r = sym.r;
+    if (sym.isolated) cls.push("isolated");
+    node.setAttribute("class", cls.join(" "));
+    node.append(...sym.shapes);
     if (classic) {
-      const isolated = b[1] === 4 || (c.tables.bus.length > 1 && !sum.conn.has(b[0]));
-      if (isolated) cls.push("isolated");
-      const fill = isolated ? "none" : vColor(v.Vm);
-      let shape;
-      if (hasGen) { r = 8; shape = sv("circle", { r, class: "body dl-body", fill }); }
-      else if (hasLoad) { r = 9; shape = sv("path", { d: `M0,${-r} L${r * 0.95},${r * 0.7} L${-r * 0.95},${r * 0.7} Z`, class: "body dl-body", fill }); }
-      else { r = 6.5; shape = sv("rect", { x: -r, y: -r, width: 2 * r, height: 2 * r, class: "body dl-body", fill }); }
-      node.setAttribute("class", cls.join(" "));
-      node.append(shape);
-      if (b[1] === 3) node.append(sv("circle", { r: r + 4, class: "ref-ring" }));
       const lines = [];
       if (showLabel("bus", "bus_i")) lines.push([`${b[0]}`, "num"]);
       if (showLabel("bus", ":voltage")) lines.push([`${v.Va.toFixed(2)}°`, ""]);
@@ -1889,10 +1907,6 @@ function renderNetwork() {
       for (const t of dataLabels("bus", b)) lines.push([t, "data"]);
       node.append(...busLabelText(lines, r + 5, -r + 2, "1.15em", "ol-label"));
     } else {
-      r = b[1] === 3 ? 9 : 7;
-      if (hasGen) node.append(sv("circle", { r: r + 4, class: "gen" }));
-      node.append(sv("circle", { r, class: "body dl-body", fill: sum.res ? vColor(v.Vm) : TYPE_COLOR[b[1]] || "#999" }));
-      if (b[2] > 0) node.append(sv("path", { d: `M${r + 2},${r + 1} l6,6 m-3,0 h3 v-3`, class: "load" }));
       const lines = showLabel("bus", "bus_i") ? [[`${b[0]}`, "num"]] : [];
       if (showLabel("bus", ":voltage")) lines.push([`${v.Vm.toFixed(3)}∠${v.Va.toFixed(1)}°`, "data"]);
       if (hasGen && showLabel("bus", ":gen")) lines.push([`G ${(sum.gen.get(b[0]) || 0).toFixed(1)} MW`, "data"]);
@@ -2777,13 +2791,25 @@ function openBusMenu(rows, cx, cy) {
   const c = S.state.case, T = c.tables.bus, menu = $("#bus-menu"), wrap = menu.parentElement.getBoundingClientRect();
   const G = geoLayout(), types = S.meta.columns.bus[1].options;
   const tag = n => { const r = G.where.get(n); return r && r.length > 3 ? r.slice(3).filter(v => v !== null && v !== "").join(" · ") : ""; };
+  // each option starts with the bus symbol as drawn in the diagram (issue #141)
+  const sum = busSummary(), classic = S.style === "classic";
+  const icon = b => {
+    const sym = busSymbol(b, sum, classic, T.length), cls = ["node"];
+    if (sym.isolated) cls.push("isolated");
+    if (G.estimated.has(b[0])) cls.push("nogeo");
+    const s = sv("svg", { class: `bus-icon${classic ? " classic" : ""}`, width: 22, height: 22, viewBox: "-14 -14 32 32", "aria-hidden": "true" });
+    const g = sv("g", { class: cls.join(" ") });
+    g.append(...sym.shapes);
+    s.append(g);
+    return s;
+  };
   closeMenus();
   menu.replaceChildren(
     h("div", { class: "sep" }, `${rows.length} buses here`),
     ...rows.map(i => {
       const b = T[i], extra = tag(b[0]);
       return h("button", { role: "option", onclick: () => { closeMenus(); pick("bus", i); } },
-        h("span", {}, `bus ${b[0]}`),
+        h("span", { class: "lead" }, icon(b), `bus ${b[0]}`),
         h("span", { class: "sub" }, `${types[b[1]] || b[1]}, area ${b[6]}${extra ? " · " + extra : ""}${G.estimated.has(b[0]) ? " (no geodata)" : ""}`));
     }));
   menu.style.left = `${Math.max(4, Math.min(cx - wrap.left + 8, wrap.width - 280))}px`;

@@ -159,7 +159,9 @@ API key to start sessions; tests use a fake client).
   is not edited in the diagram). A click on buses drawn within
   `OVERLAP_PX` screen pixels of each other opens `#bus-menu` at the
   pointer to choose one (`busesAt`/`openBusMenu`), instead of picking
-  the topmost. GLM output keeps lat/lon on the bus and writes
+  the topmost; each option starts with the bus symbol as drawn in the
+  current style (issue #141, `busSymbol`, shared with `renderNetwork`;
+  `.bus-icon` CSS mirrors the `#net .node` rules). GLM output keeps lat/lon on the bus and writes
   auxiliary values as `pp_geodata` runtime-class objects (parent the bus,
   named `pp_geodata_<bus_i>`, plus `_<row>` when the bus has several rows;
   `_dump_glm_geodata`/`_glm_geodata` in `case.py`); tags that are not GLM
