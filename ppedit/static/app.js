@@ -553,7 +553,7 @@ function renderSeries() {
   pick.disabled = !all.length;
   const item = x => h("button", { "data-action": "series-export", "data-format": x, role: "menuitem" }, x.slice(1));
   $("#series-export-menu").replaceChildren(h("div", { class: "sep" }, ser ? `Export ${ser.name} as` : "Export combined as"), ...exts.map(item));
-  $("#series-input").accept = readFormats().join(",");
+  $("#series-input").accept = acceptList(readFormats());
   $("#series-export-btn").disabled = !all.length || (!ser && comb && !!comb.error);
   $("#series-clear").disabled = !all.length;
   $("#series-clear").textContent = ser ? "Remove series" : "Remove all";
@@ -614,6 +614,20 @@ async function importSeries(file) {
 function readFormats() {
   return S.meta.table_read_formats || S.meta.table_formats || [];
 }
+// The `accept` list of a file chooser for the extensions `formats`. Browser
+// file choosers match only a file's last extension (".csv.gz" never matches,
+// so compressed files were greyed out), so a compressed format is listed by
+// its compression suffix (".gz"); `fileFormatOk` then checks the full name.
+function acceptList(formats) {
+  return [...new Set(formats.map(x => x.split(".").length > 2 ? "." + x.split(".").pop() : x))].join(",");
+}
+// true when `name` ends with one of the extensions `formats` (case ignored)
+function fileFormatOk(name, formats) {
+  const n = name.toLowerCase();
+  return !formats.length || formats.some(x => n.endsWith(x.toLowerCase()));
+}
+// the formats the file chooser was last opened for, checked on change
+const pickFormats = { table: null, series: null };
 const TABLE_FORMAT_NAMES = {
   ".csv": "comma-separated", ".tsv": "tab-separated", ".json": "JSON records", ".jsonl": "JSON lines", ".ndjson": "JSON lines",
   ".parquet": "Parquet", ".feather": "Feather", ".orc": "ORC", ".xlsx": "Excel", ".xlsm": "Excel with macros", ".xls": "Excel 97-2003",
@@ -670,9 +684,11 @@ function openImportDialog(mode) {
     d.close();
     const input = $(mode === "table" ? "#table-input" : "#series-input");
     // a base format admits its compressed forms too; a compressed choice only itself
-    input.accept = (format.value ? readFormats().filter(x => x === format.value
+    const formats = format.value ? readFormats().filter(x => x === format.value
       || (format.value.split(".").length === 2 && x.startsWith(format.value + ".")))
-      : readFormats()).join(",");
+      : readFormats();
+    input.accept = acceptList(formats);
+    pickFormats[mode === "table" ? "table" : "series"] = formats;
     input.click();
   } }, "Choose file…");
   const what = mode === "table" ? (S.selected[S.view]?.size
@@ -949,7 +965,7 @@ function renderExportMenu() {
   $("#export-menu").replaceChildren(h("div", { class: "sep" }, "Export as"),
     ...exts.filter(x => x.split(".").length === 2).map(x => h("div", { class: "fmt" }, item(x, x.slice(1)),
       ...exts.filter(y => y.startsWith(x + ".")).map(y => item(y, y.slice(x.length), `${y.slice(1)} (compressed)`)))));
-  $("#table-input").accept = (S.meta.table_read_formats || exts).join(",");
+  $("#table-input").accept = acceptList(S.meta.table_read_formats || exts);
 }
 
 function fileBase64(file) {
@@ -3842,13 +3858,20 @@ async function init() {
     else if (t.id === "net-areas") setAreas(t.checked);
   });
   $("#map-menu").addEventListener("change", e => { if (e.target.dataset.layer) setMapLayer(e.target.dataset.layer, e.target.checked); });
+  // the chooser filters on the last extension only (acceptList): check the whole name
+  const formatRefused = (f, which) => {
+    const formats = pickFormats[which] || readFormats();
+    if (fileFormatOk(f.name, formats)) return false;
+    toast(`${f.name} is not a file of the chosen format (${formats.length > 6 ? "see File format" : formats.join(", ")})`, true);
+    return true;
+  };
   $("#table-input").addEventListener("change", e => {
     const f = e.target.files[0]; e.target.value = "";
-    if (f) importRows(f).catch(() => { /* toast already shown */ });
+    if (f && !formatRefused(f, "table")) importRows(f).catch(() => { /* toast already shown */ });
   });
   $("#series-input").addEventListener("change", e => {
     const f = e.target.files[0]; e.target.value = "";
-    if (f) importSeries(f).catch(() => { /* toast already shown */ });
+    if (f && !formatRefused(f, "series")) importSeries(f).catch(() => { /* toast already shown */ });
   });
   const delta = $("#series-delta");
   delta.addEventListener("change", () => act("/api/series", { delta: delta.value, name: S.seriesName }).catch(() => renderSeries()));
