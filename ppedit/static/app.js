@@ -7,7 +7,7 @@ const S = {
   view: "network",
   table: "bus",        // table the Case tab opens (the one shown last)
   precision: null,     // decimal places by unit (set from loadPrecision below)
-  selected: { bus: new Set(), gen: new Set(), branch: new Set(), gencost: new Set(), dcline: new Set(), dclinecost: new Set(), areas: new Set() },
+  selected: { bus: new Set(), gen: new Set(), branch: new Set(), gencost: new Set(), dcline: new Set(), dclinecost: new Set(), storage: new Set(), areas: new Set() },
   filter: "",
   resSort: {},         // Results table title -> {col, dir} (see block)
   tableSort: {},       // case table -> {col, dir} (see tableOrder)
@@ -47,7 +47,7 @@ const sv = (tag, attrs = {}) => {
   for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
   return el;
 };
-const TABLE_TITLES = { bus: "bus", gen: "generator", branch: "branch", gencost: "generator cost", dcline: "DC line", dclinecost: "DC line cost", areas: "area" };
+const TABLE_TITLES = { bus: "bus", gen: "generator", branch: "branch", gencost: "generator cost", dcline: "DC line", dclinecost: "DC line cost", storage: "storage", areas: "area" };
 const fmt = (v, d = 3) => (v === null || v === undefined) ? "–" : (typeof v === "number" ? v.toFixed(d) : v);
 
 // Display precision of case table values by unit (issue #70; Settings tab):
@@ -687,6 +687,10 @@ function rowLabel(table, i) {
   if (table === "dclinecost") {
     const d = t.dcline[i];
     return `dcline ${i + 1}${d ? ` ${d[0]}→${d[1]}` : ""}`;
+  }
+  if (table === "storage") {
+    const s = t.storage[i], g = s && t.gen[s[0] - 1];
+    return `${i + 1}${g ? ` gen ${s[0]} @${g[0]}` : ""}`;
   }
   return `${i + 1}`;
 }
@@ -2784,8 +2788,15 @@ function renderInspector() {
     if (rg) kids.push(h("div", { class: "sub" }, `Solution: Pg ${fmt(rg.Pg, 2)} MW, Qg ${fmt(rg.Qg, 2)} MVAr`));
     kids.push(h("dl", {}, cols.map((_, k) => k).flatMap(field)));
     const cost = c.tables.gencost[index];
+    const store = c.tables.storage.findIndex(s => s[0] === index + 1);
+    if (store >= 0) {
+      const s = c.tables.storage[store];
+      kids.push(h("div", { class: "sub" }, `Discharges storage ${store + 1}: ${fmt(s[4], 1)} MWh, ${fmt(s[5], 1)} MVA, charging `
+        + (s[1] === -1 ? "through this generator" : `at bus ${s[1]}`) + (s[11] ? "" : " · out of service")));
+    }
     kids.push(h("div", { class: "btns" }, h("button", { onclick: () => goto("gen", index) }, "Show in table"),
-      cost ? h("button", { onclick: () => goto("gencost", index) }, "Show cost") : null));
+      cost ? h("button", { onclick: () => goto("gencost", index) }, "Show cost") : null,
+      store >= 0 ? h("button", { onclick: () => goto("storage", store) }, "Show storage") : null));
   } else if (kind === "areas") {
     const num = row[0], t = areaTotals(num), sol = t.solved;
     const bi = c.tables.bus.findIndex(b => b[0] === row[1]);
@@ -2953,7 +2964,7 @@ function sourceReport() {
   if (!src) return null;
   const fmtName = (FORMAT_NAMES[src.format] || src.format) + (src.revision ? `, revision ${src.revision}` : "");
   const names = { bus: "buses", gen: "generators", branch: "branches", gencost: "generator costs",
-    dcline: "DC lines", dclinecost: "DC line costs", areas: "areas" };
+    dcline: "DC lines", dclinecost: "DC line costs", storage: "storage units", areas: "areas" };
   const rows = S.meta.tables.filter(t => src.size[t]).map(t => `${src.size[t]} ${names[t] || t}`).join(", ") || "no rows";
   return h("div", { class: "res-block source-report" },
     h("h3", {}, `Opened ${src.file}`),
@@ -2993,12 +3004,28 @@ function stepPicker(r) {
     h("span", { class: "hint" }, `of ${n}, ${m.delta} h each; the diagram and table solution columns show this step (loads drawn on the diagram are the case values; see the Multistep tab)`));
 }
 function stepTable(r) {
+  // with modeled storage: net storage output (discharge - charge) and energy stored at the step's end
+  const stores = r.steps.some(s => (s.storage || []).some(x => x.solved));
   const rows = r.steps.map((s, i) => {
     const pg = s.gen.reduce((a, g) => a + g.Pg, 0), pd = (s.areas || []).reduce((a, x) => a + x.Pd, 0);
-    return [i + 1, s.label, fmt(s.objective, 2), fmt(pg, 2), fmt(pd, 2), fmt(s.losses_MW, 2)];
+    const st = (s.storage || []).filter(x => x.solved);
+    return [i + 1, s.label, fmt(s.objective, 2), fmt(pg, 2), fmt(pd, 2), fmt(s.losses_MW, 2)]
+      .concat(stores ? [fmt(st.reduce((a, x) => a + x.Pdis - x.Pch, 0), 2), fmt(st.reduce((a, x) => a + (x.E ?? 0), 0), 2)] : []);
   });
-  return block("Steps", ["step", "time", "cost $/h", "Pg MW", "Pd MW", "loss MW"], rows,
-    r.steps.map((_, i) => i === r.step ? Array(6).fill("current") : []), "wide");
+  const head = ["step", "time", "cost $/h", "Pg MW", "Pd MW", "loss MW"].concat(stores ? ["storage MW", "stored MWh"] : []);
+  return block("Steps", head, rows, r.steps.map((_, i) => i === r.step ? Array(head.length).fill("current") : []), "wide");
+}
+// storage of the step shown (result.storage, issue #128): one row per storage table row
+function storageBlock(r) {
+  const t = S.state.case.tables;
+  if (!r.storage || !r.storage.some(x => x.solved)) return null;
+  return block("Storage", ["#", "gen", "charge bus", "Pch MW", "Pdis MW", "E MWh", "aging $/h"],
+    r.storage.map((x, i) => {
+      const s = t.storage[i] || [];
+      const g = t.gen[(s[0] ?? 0) - 1];
+      return [i + 1, s[0] ?? "–", s[1] === -1 ? (g ? `${g[0]} (gen)` : "gen") : s[1] ?? "–"].concat(x.solved
+        ? [fmt(x.Pch, 2), fmt(x.Pdis, 2), fmt(x.E, 2), fmt(x.cost, 2)] : ["–", "–", "–", "–"]);
+    }));
 }
 
 function renderResults() {
@@ -3050,6 +3077,7 @@ function renderResults() {
       block("Generator dispatch", ["gen", "bus", "Pg MW", "Qg MVAr"], r.gen.map((g, i) => [i + 1, g.bus, fmt(g.Pg, 2), fmt(g.Qg, 2)])),
       // branch and DC line flows share a row, branch on the left, so they read side by side
       dclineBlock ? h("div", { class: "res-pair" }, branchBlock, dclineBlock) : branchBlock,
+      multi ? storageBlock(r) : null,
       r.areas && (r.areas.length > 1 || c.tables.areas.length) ? block("Areas", ["area", "name", "buses", "Pg MW", "Pd MW", "shunt MW", "loss MW", "export MW", "ref bus"]
         .concat(r.kind === "opf" ? ["price $/MWh"] : []),
         r.areas.map(a => [a.area, a.name || "–", a.buses, fmt(a.Pg, 2), fmt(a.Pd, 2), fmt(a.shunt_MW, 2), fmt(a.losses_MW, 2), fmt(a.export_MW, 2), a.price_ref_bus ?? "–"]

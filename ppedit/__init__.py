@@ -190,6 +190,12 @@ What is not promised
     and admittance loads become constant power at the case voltage; each
     3-winding transformer adds a star bus; there are no cost rows.
 
+  - `storage` (ppedit's own table, issue #128) is written to GLM as
+    `pp_storage` runtime-class objects, parent the generator that
+    discharges it; only multistep CVXOPF OPF models it (other solves warn
+    and run its generator as an ordinary generator), and charging and
+    discharging in the same step are not excluded.
+
   - `areas` is not written to GLM (there is no GridLAB-D object for it).
     `dclinecost` is written to GLM as `dclinecost` runtime-class objects
     with the `pypower.gencost` properties, parent the DC line (GridLAB-D

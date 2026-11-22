@@ -16,9 +16,9 @@ Method
 ------
 
 1. Node `Pmax(t)` is the operating capacity of the dispatchable categories
-   (`generation.fuels.DISPATCHABLE`: all but solar and wind, storage
-   included) plus the actual net generation of the non-dispatchable ones
-   (solar and wind), negative hours set to 0.
+   other than storage (`DISPATCHABLE`: all but solar, wind, battery and
+   pumped storage) plus the actual net generation of the non-dispatchable
+   ones (solar and wind), negative hours set to 0.
 2. Each generator is placed at the node whose geohash is that of its bus
    (6 digits, from the case geodata). A generator at a US bus (one with a
    county FIPS code) that is not at a node goes to the node that received
@@ -29,6 +29,10 @@ Method
    `Pmax`.
 3. A node's `Pmax(t)` is shared among its generators in proportion to
    their case `Pmax` (equally if those are all 0).
+4. Storage generators (case `Pmin` < 0, those of `wecc240_storage.csv`)
+   get no column and keep their case `Pmax` (the storage rating `Smax`):
+   the node battery and pumped storage capacity left out in step 1 is
+   theirs. The report compares the two at each node.
 
 Syntax
 ------
@@ -57,8 +61,9 @@ from ppedit.case import geohash # pylint: disable=wrong-import-position
 
 WECC240 = "https://raw.githubusercontent.com/eudoxys/wecc240/main/wecc240/data"
 
-DISPATCHABLE = ["coal","natural_gas","oil","nuclear","hydro","geothermal","biomass",
-    "battery_storage","pumped_storage","other"]
+DISPATCHABLE = ["coal","natural_gas","oil","nuclear","hydro","geothermal","biomass","other"]
+STORAGE = ["battery_storage","pumped_storage"]
+"""Capacity categories of the storage generators (case `Pmin` < 0), which keep their case `Pmax`"""
 NONDISPATCHABLE = ["solar","wind"]
 
 def _read(path):
@@ -98,6 +103,8 @@ def build(data,case_path,output,wecc240=WECC240,start="2020-01-01 00:00:00+00:00
     act = sum(a.clip(lower=0) for a in act)
     node = cap + act
     node = node.loc[(start or node.index[0]):(end or node.index[-1])]
+    stored = sum(_read(os.path.join(data,f"node_capacity_{x}.csv.gz")) for x in STORAGE)
+    stored = stored.loc[node.index[0]:node.index[-1]]
     report.append(f"{len(node)} hours, {len(node.columns)} nodes; {negative} negative solar/wind "
         "node-hours set to 0")
 
@@ -109,14 +116,16 @@ def build(data,case_path,output,wecc240=WECC240,start="2020-01-01 00:00:00+00:00
         where.setdefault(row[0],row)
     centers = {n:_decode(n) for n in node.columns}
     members = {n:[] for n in node.columns}
+    storage = {n:[] for n in node.columns}
     for k,gen in enumerate(case.tables["gen"]):
         geo = where.get(gen[0])
         if geo is None:
             report.append(f"gen {k+1} at bus {gen[0]}: no geodata, keeps its case Pmax")
             continue
         code = geohash(geo[1],geo[2],6)
+        group = storage if gen[9] < 0 else members
         if code in members:
-            members[code].append(k)
+            group[code].append(k)
             continue
         if county is None or geo[county] in ("",None):
             report.append(f"gen {k+1} at bus {gen[0]}: outside the US, keeps its case Pmax {gen[8]:g} MW")
@@ -127,10 +136,15 @@ def build(data,case_path,output,wecc240=WECC240,start="2020-01-01 00:00:00+00:00
         if near not in members:
             near = min(centers,key=lambda n: _distance((geo[1],geo[2]),centers[n]))
             how = f"nearest node ({name or 'county ' + str(geo[county])} not mapped)"
-        members[near].append(k)
+        group[near].append(k)
         report.append(f"gen {k+1} at bus {gen[0]} ({code}): {how} {near}, "
             f"{_distance((geo[1],geo[2]),centers[near]):.0f} km")
 
+    for n,gens in storage.items():
+        if gens or stored[n].max() > 0:
+            report.append(f"node {n}: storage capacity {stored[n].max():.0f} MW peak; storage gen(s) "
+                + (", ".join(f"{k+1} ({case.tables['gen'][k][8]:g} MW)" for k in gens) or "none")
+                + " keep their case Pmax")
     columns = {}
     for n,gens in members.items():
         if not gens:

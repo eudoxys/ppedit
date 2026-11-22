@@ -1,7 +1,7 @@
 """PYPOWER case model
 
 The `Case` class holds one PYPOWER case (`version`, `baseMVA`, `bus`, `gen`,
-`branch`, and optional `gencost`, `dcline`, `dclinecost` and `areas`) as plain Python
+`branch`, and optional `gencost`, `dcline`, `dclinecost`, `storage` and `areas`) as plain Python
 lists so it can be edited row by row and sent to a browser as JSON. It reads
 and writes:
 
@@ -62,7 +62,7 @@ Examples
     >>> from ppedit import Case
     >>> case = Case.builtin("case9")
     >>> case.size()
-    {'bus': 9, 'gen': 3, 'branch': 9, 'gencost': 3, 'dcline': 0, 'dclinecost': 0, 'areas': 1}
+    {'bus': 9, 'gen': 3, 'branch': 9, 'gencost': 3, 'dcline': 0, 'dclinecost': 0, 'storage': 0, 'areas': 1}
     >>> case.set_value("bus", 4, "Pd", 95)  # True would mean other cells changed
     False
     >>> [issue["message"] for issue in case.validate()]
@@ -107,6 +107,12 @@ Caveats
     GridLAB-D loads these objects but does not pass them to its solver.
     The class is named for a `pypower.dclinecost` class that GridLAB-D is
     expected to add; GLM input also reads `object pypower.dclinecost`.
+
+  - `module pypower` has no storage class, so GLM output declares a
+    runtime class `pp_storage` with the `storage` columns after `gen_i` as
+    properties and writes one object per `storage` row, named
+    `pp_storage_<n>` with its generator as parent (`gen_i`); GLM input
+    reads them back. GridLAB-D loads them but does not use them.
 
   - GLM output names buses `pp_bus_<bus_i>`, generators `pp_gen_<n>`,
     branches `pp_branch_<n>` and cost curves `pp_gencost_<n>` (1-based row
@@ -185,6 +191,13 @@ COST_MODELS = {1:"PIECEWISE",2:"POLYNOMIAL"}
 
 DCLINE_STATUS = {1:"IN",0:"OUT"}
 """DC line status codes and their `module pypower` keywords"""
+
+STORAGE_STATUS = {1:"IN",0:"OUT"}
+"""Storage status codes"""
+
+HOURS_PER_MONTH = 730.0
+"""Hours in the month of the storage `self_discharge` rate (as cvxopf's
+`HOURS_PER_MONTH`)"""
 
 def _cost_columns(what):
     return [
@@ -272,6 +285,20 @@ COLUMNS = {
         _col("loss1","MW/MW",desc="linear term of the loss function (loss = loss0 + loss1*Pf)"),
     ],
     "dclinecost": _cost_columns("MW of DC line flow Pf"),
+    "storage": [
+        _col("gen_i","","int",1,"generator row (counted from 1) that discharges the storage"),
+        _col("bus_i","","int",-1,"bus number where the storage charges (-1: negative output of its generator)"),
+        _col("Es","MWh",desc="energy stored at the start of the horizon"),
+        _col("Emin","MWh",desc="minimum energy stored"),
+        _col("Emax","MWh",default=100.0,desc="maximum energy stored"),
+        _col("Smax","MVA",default=25.0,desc="charge and discharge power rating"),
+        _col("eta_ch","",default=1.0,desc="charge efficiency (fraction of charging power stored)"),
+        _col("eta_dis","",default=1.0,desc="discharge efficiency (fraction of energy withdrawn delivered)"),
+        _col("self_discharge","1/month",desc="fraction of stored energy lost per month (730 h)"),
+        _col("aging","$/MWh",default=0.01,desc="cost of charge and discharge throughput (cycling)"),
+        _col("Eend","MWh",default=-1.0,desc="energy stored at the end of the horizon (-1: free)"),
+        _col("status","","enum",1,"storage status",STORAGE_STATUS),
+    ],
     "areas": [
         _col("area","","int",1,"area number (the bus area column)"),
         _col("price_ref_bus","","int",0,"price reference bus number"),
@@ -402,6 +429,12 @@ ISOLATED_EXPLAIN = ("A bus with no in-service branch has no electrical connectio
     "cannot be served. ppedit solves it as type NONE (left out) without changing the case. "
     "Put a branch to it in service, or set the bus type to NONE (4) to make this explicit.")
 """Physical meaning of the isolated-bus solver warning (`detail["explain"]`)"""
+
+STORAGE_EXPLAIN = ("Storage links the energy a generator delivers to the energy charged "
+    "earlier, so it needs several time steps solved together: only a multistep CVXOPF OPF "
+    "(Run OPF, Multistep, with a time series) models it. Other solves treat its generator as "
+    "an ordinary generator and do not charge it.")
+"""Physical meaning of the storage-not-modeled solver warning (`detail["explain"]`)"""
 
 DCLINE_CUT_EXPLAIN = ("A DC line with a terminal at an isolated or type NONE bus has nowhere "
     "to deliver or draw power, so it is left out of the solve with zero flow.")
@@ -606,7 +639,7 @@ class Case:
                         f"expected at least {len(spec)}")
                 rows.append([_number(v,c["kind"]) for v,c in zip(row,spec)])
             self.tables[table] = rows
-        for table in ("dcline","areas"):
+        for table in ("dcline","storage","areas"):
             spec = COLUMNS[table][:AREAS_PPC] if table == "areas" else COLUMNS[table]
             rows = []
             for n,row in enumerate(_tolist(data.get(table,[]))):
@@ -734,14 +767,15 @@ class Case:
           - `arrays`: return numpy arrays (for the solver) instead of lists;
             geodata and `areas` are left out
 
-        `gencost`, `dcline`, `dclinecost` and `areas` are included only when
-        they have rows. `areas` holds the two PYPOWER columns (`area`,
+        `gencost`, `dcline`, `dclinecost`, `storage` and `areas` are included
+        only when they have rows (`storage` and `areas` not with `arrays`:
+        PYPOWER has neither). `areas` holds the two PYPOWER columns (`area`,
         `price_ref_bus`); when any area has a name, `areanames` lists the
         names, one per `areas` row (`""` for none).
         """
         data = {"version":self.version,"baseMVA":self.baseMVA}
-        for table in ("bus","gen","branch","gencost","dcline","dclinecost","areas"):
-            if table == "areas" and arrays:
+        for table in ("bus","gen","branch","gencost","dcline","dclinecost","storage","areas"):
+            if table in ("areas","storage") and arrays:
                 continue
             if table in COST_TABLES:
                 if self.tables[table]:
@@ -824,7 +858,7 @@ def {name}():
     ppc["baseMVA"] = {_fmt(self.baseMVA)}
 ''')
         data = self.to_ppc()
-        for table in ("bus","gen","branch","gencost","dcline","dclinecost","areas"):
+        for table in ("bus","gen","branch","gencost","dcline","dclinecost","storage","areas"):
             if table not in data:
                 continue
             header = " ".join(c["name"] for c in COLUMNS[table][:len(data[table][0])]) \
@@ -911,6 +945,8 @@ def {name}():
                 out.write("}\n")
         if self.tables["dclinecost"]:
             self._dump_glm_dclinecost(out)
+        if self.tables["storage"]:
+            self._dump_glm_storage(out)
         if self.geotags:
             self._dump_glm_geodata(out)
         if self.tables["areas"] != self._default_areas():
@@ -942,6 +978,22 @@ def {name}():
                 f'    model {COST_MODELS.get(model,"UNKNOWN")};\n'
                 f'    startup {_fmt(startup)} $;\n    shutdown {_fmt(shutdown)} $;\n'
                 f'    costs "{costs}";\n}}\n')
+
+    def _dump_glm_storage(self,out):
+        """Write `storage` rows as `pp_storage` objects (runtime class, parent the generator)"""
+        out.write("\n//\n// storage (module pypower has no storage class)\n//\n")
+        keywords = ",".join(f"{v}={k}" for k,v in sorted(STORAGE_STATUS.items()))
+        out.write(f"class {STORAGE_CLASS}\n{{\n    int32 bus_i;\n"
+            + "".join(f"    double {c['name']}" + (f"[{c['unit']}]" if c["unit"] in ("MWh","MVA") else "")
+                + ";" + (f" // {c['unit']}" if c["unit"] not in ("","MWh","MVA") else "") + "\n"
+                for c in COLUMNS["storage"][2:-1])
+            + f"    enumeration {{{keywords}}} status;\n}}\n")
+        for n,row in enumerate(self.tables["storage"]):
+            out.write(f'object {STORAGE_CLASS}\n{{\n    name "pp_storage_{n+1}";\n'
+                f'    parent "pp_gen_{row[0]}";\n    bus_i {row[1]};\n'
+                + "".join(f"    {c['name']} {_fmt(v)};\n"
+                    for c,v in zip(COLUMNS["storage"][2:-1],row[2:-1]))
+                + f"    status {STORAGE_STATUS.get(row[-1],'OUT')};\n}}\n")
 
     def _dump_glm_geodata(self,out):
         """Write the auxiliary geodata as `pp_geodata` objects (runtime class)"""
@@ -1003,7 +1055,8 @@ def {name}():
         """Set one cell
 
         Changing a bus number also renumbers the generators, branches, DC
-        lines, area price reference buses and geodata that refer to it.
+        lines, storage charging buses, area price reference buses and
+        geodata that refer to it.
         Changing an area number (`areas` table) also renumbers the `area` of
         the buses in that area. Changing a cost model or cost data
         (`gencost` or `dclinecost`) updates `ncost` to match.
@@ -1058,6 +1111,10 @@ def {name}():
                 if area[1] == old and value != old:
                     area[1] = value
                     cascade = True
+            for store in self.tables["storage"]:
+                if store[1] == old and value != old and old >= 0:
+                    store[1] = value
+                    cascade = True
             for geo in self.geodata:
                 if geo[0] == old and value != old:
                     geo[0] = value
@@ -1077,6 +1134,11 @@ def {name}():
                 or (table == "areas" and column == "price_ref_bus"):
             if not any(r[0] == value for r in self.tables["bus"]):
                 raise CaseError(f"bus {value} does not exist")
+        if table == "storage" and column == "bus_i" and value != -1 \
+                and not any(r[0] == value for r in self.tables["bus"]):
+            raise CaseError(f"bus {value} does not exist (use -1 to charge through the generator)")
+        if table == "storage" and column == "gen_i" and not 1 <= value <= len(self.tables["gen"]):
+            raise CaseError(f"generator row {value} does not exist (rows are counted from 1)")
         if table in COST_TABLES and column == "model" and value != record[0]:
             n = len(_costs_list(record[4]))
             record[3] = n//2 if value == 1 else n
@@ -1100,6 +1162,10 @@ def {name}():
         elif table in ("branch","dcline"):
             row[0] = buses[0][0] if buses else 0
             row[1] = buses[1][0] if len(buses) > 1 else row[0]
+        elif table == "storage":
+            used = {r[0] for r in self.tables["storage"]}
+            free = [n+1 for n in range(len(self.tables["gen"])) if n+1 not in used]
+            row[0] = free[0] if free else (1 if self.tables["gen"] else 0)
         elif table == "areas":
             listed = {r[0] for r in self.tables["areas"]}
             unlisted = sorted({r[6] for r in buses} - listed)
@@ -1154,6 +1220,10 @@ def {name}():
             raise
         if table in ("gen","dcline") and index < len(rows) - 1:
             self._series_rekey(table,lambda key: key + 1 if key > index else key)
+        if table == "gen" and index < len(rows) - 1:
+            for store in self.tables["storage"]:
+                if store[0] > index:
+                    store[0] += 1
         cost = {v:k for k,v in COST_TABLES.items()}.get(table)
         if cost and self.tables[cost]:
             costs = self.tables[cost]
@@ -1174,12 +1244,13 @@ def {name}():
           - `rows`: row indexes to delete
 
           - `cascade`: when deleting buses, also delete the generators,
-            branches and DC lines connected to them and the areas rows that
-            use them as price reference bus; otherwise refuse if any exist.
-            Geodata rows of deleted buses are always removed.
+            branches, DC lines and storage connected to them and the areas
+            rows that use them as price reference bus; otherwise refuse if
+            any exist. Geodata rows of deleted buses are always removed.
 
         Deleting generators (DC lines) also deletes their `gencost`
-        (`dclinecost`) rows.
+        (`dclinecost`) rows; deleting generators also deletes the storage
+        they discharge and renumbers `gen_i` of the rest.
 
         Returns
         -------
@@ -1199,12 +1270,15 @@ def {name}():
             dclines = [n for n,b in enumerate(self.tables["dcline"])
                 if b[0] in numbers or b[1] in numbers]
             areas = [n for n,a in enumerate(self.tables["areas"]) if a[1] in numbers]
-            if (gens or branches or dclines or areas) and not cascade:
+            stores = [n for n,x in enumerate(self.tables["storage"]) if x[1] in numbers]
+            if (gens or branches or dclines or areas or stores) and not cascade:
                 raise CaseError(f"bus(es) {sorted(numbers)} have {len(gens)} "
                     f"generator(s), {len(branches)} branch(es) and {len(dclines)} "
-                    "DC line(s) connected" + (f", and are the price reference bus "
+                    "DC line(s) connected" + (f", {len(stores)} storage row(s) charging there"
+                    if stores else "") + (f", and are the price reference bus "
                     f"of {len(areas)} area(s)" if areas else ""))
-            for sub,index in (("gen",gens),("branch",branches),("dcline",dclines),("areas",areas)):
+            for sub,index in (("storage",stores),("gen",gens),("branch",branches),
+                    ("dcline",dclines),("areas",areas)):
                 for k,v in self.delete_rows(sub,index).items():
                     removed[k] += v
             self.geodata = [g for g in self.geodata if g[0] not in numbers]
@@ -1225,6 +1299,14 @@ def {name}():
             gone = {r+1 for r in rows}
             self._series_rekey(table,lambda key: None if key in gone
                 else key - sum(1 for g in gone if g < key))
+        if table == "gen":
+            stores = self.tables["storage"]
+            for n in range(len(stores)-1,-1,-1):
+                if stores[n][0] in gone:
+                    del stores[n]
+                    removed["storage"] += 1
+                else:
+                    stores[n][0] -= sum(1 for g in gone if g < stores[n][0])
         return removed
 
     def import_rows(self,table:str,columns:list[str],rows:list[list],
@@ -1927,6 +2009,11 @@ def {name}():
                             f"{table} {n+1} has Pmin {lo[n]:g} > Pmax {hi[n]:g}")
         out["gen_limited"] = sorted({int(x.split(".")[2]) - 1 for x in ser["columns"]
             if x.startswith("gen.")})
+        names = [c["name"] for c in COLUMNS["storage"]]
+        out["storage"] = [{"row":n,"gen":int(r[0])-1,"bus":None if r[1] == -1 else int(r[1]),
+            **{k:float(v) for k,v in zip(names[2:-1],r[2:-1])}}
+            for n,r in enumerate(self.tables["storage"]) if r[-1] == 1]
+        out["storage_rows"] = len(self.tables["storage"])
         return out
 
     def apply_result(self,result:dict):
@@ -2067,6 +2154,44 @@ def {name}():
                         add("error",table,n,"costs","piecewise MW points must increase")
                 if startup < 0 or shutdown < 0:
                     add("error",table,n,"startup","startup/shutdown cost is negative")
+        owners = {}
+        for n,row in enumerate(self.tables["storage"]):
+            gen_i,bus_i,es,emin,emax,smax,eta_ch,eta_dis,loss,aging,eend,status = row
+            if not 1 <= gen_i <= len(gen):
+                add("error","storage",n,"gen_i",f"generator row {gen_i} does not exist")
+            elif status == 1:
+                if gen_i in owners:
+                    add("error","storage",n,"gen_i",f"generator {gen_i} already discharges "
+                        f"storage row {owners[gen_i]+1}")
+                owners.setdefault(gen_i,n)
+                if gen[gen_i-1][9] > 0:
+                    add("warning","storage",n,"gen_i",f"generator {gen_i} has Pmin "
+                        f"{gen[gen_i-1][9]:g} > 0, so the storage must always discharge")
+                if gen[gen_i-1][7] != 1:
+                    add("warning","storage",n,"gen_i",f"generator {gen_i} is out of service, "
+                        "so the storage cannot discharge")
+            if bus_i != -1 and bus_i not in numbers:
+                add("error","storage",n,"bus_i",f"bus {bus_i} does not exist")
+            if emin < 0:
+                add("error","storage",n,"Emin","Emin is negative")
+            if emin > emax:
+                add("error","storage",n,"Emin","Emin exceeds Emax")
+            elif not emin <= es <= emax:
+                add("error","storage",n,"Es","Es is outside Emin..Emax")
+            if eend != -1 and not emin <= eend <= emax:
+                add("error","storage",n,"Eend","Eend is outside Emin..Emax (-1 leaves it free)")
+            if smax <= 0:
+                add("error","storage",n,"Smax","Smax must be positive")
+            for col,val in (("eta_ch",eta_ch),("eta_dis",eta_dis)):
+                if not 0 < val <= 1:
+                    add("error","storage",n,col,f"{col} must be in (0, 1]")
+            if not 0 <= loss < 1:
+                add("error","storage",n,"self_discharge","self_discharge must be in [0, 1)")
+            if aging < 0:
+                add("error","storage",n,"aging","aging cost is negative")
+            elif aging == 0 and (eta_ch < 1 or eta_dis < 1):
+                add("warning","storage",n,"aging","lossy storage with no aging cost may "
+                    "charge and discharge at once to waste energy")
         if self.tables["areas"]:
             used = {}
             for row in bus:
@@ -2277,6 +2402,8 @@ def {name}():
             if series and series["gen_limited"] and cvx_options["preparation"] != "default":
                 raise CaseError("per-step generator limits (gen Pmin, Pmax series) need the "
                     "default cvxopf preparation (Settings tab)")
+            if series and series["storage"] and cvx_options["preparation"] != "default":
+                raise CaseError("storage needs the default cvxopf preparation (Settings tab)")
         ppc = self.to_ppc(arrays=True)
         # buses with no in-service branch make the solver fail; solve them as isolated
         connected = {r[k] for r in self.tables["branch"] if r[10] == 1 and r[0] != r[1] for k in (0,1)}
@@ -2303,6 +2430,13 @@ def {name}():
             messages.append({"level":level,"message":text} | ({"detail":detail} if detail else {}))
             log.write(text + "\n")
         busrow = {r[0]:n for n,r in enumerate(self.tables["bus"])}
+        active = [n for n,r in enumerate(self.tables["storage"]) if r[-1] == 1]
+        if active and series is None:
+            message("warning",f"Storage row(s) {', '.join(str(n+1) for n in active)} not modeled: "
+                "storage is solved only by multistep CVXOPF OPF (its generators run as ordinary "
+                "generators)",_message_detail(STORAGE_EXPLAIN,[{"constraint":"energy balance "
+                "left out of the solve","element":f"storage {n+1}","table":"storage","row":n,
+                "value":None} for n in active]))
         if isolated:
             message("warning",f"Solved bus(es) {', '.join(str(x) for x in isolated)} as isolated "
                 "(type NONE): no in-service branch",_message_detail(ISOLATED_EXPLAIN,
@@ -2374,8 +2508,9 @@ def {name}():
             slog.write(f"Step {t+1} of {len(res['steps'])} ({label})\n")
             out = self.at_step(t)._solution(step,kind,cvx,info,opt,slog,dead) # pylint: disable=protected-access
             out["label"] = label
+            out["storage"] = step.get("storage",[])
             steps.append({k:out[k] for k in ("label","success","objective","losses_MW",
-                "dcline_losses_MW","bus","gen","branch","dcline","areas","extended","log")})
+                "dcline_losses_MW","bus","gen","branch","dcline","storage","areas","extended","log")})
         result = dict(steps[0])
         result.update(info,label=None,messages=messages,log=common,steps=steps,
             horizon_objective=float(res["f"]) if "f" in res else None)
@@ -2711,6 +2846,10 @@ DCLINECOST_CLASS = "dclinecost"
 """GLM runtime class of the DC line cost objects (one per `dclinecost` row,
 parent the DC line, with the properties of `pypower.gencost`)"""
 
+STORAGE_CLASS = "pp_storage"
+"""GLM runtime class of the storage objects (one per `storage` row, parent
+its generator, the `storage` columns after `gen_i` as properties)"""
+
 GEODATA_CLASS = "pp_geodata"
 """GLM runtime class of the auxiliary geodata objects (one per geodata row,
 parent the bus, one property per tag)"""
@@ -2977,7 +3116,7 @@ def _parse_glm(text):
     objects = {t:[] for t in _SOLVER_CLASSES}
     others = {}
     geoclass,geoobjects = None,[]
-    dccosts = []
+    dccosts,stores = [],[]
     module = False
     for header,body in _glm_blocks(text):
         words = header.split()
@@ -2991,7 +3130,7 @@ def _parse_glm(text):
             extra = sorted(set(props) - {"baseMVA","version"})
             if extra:
                 others["module pypower setting"] = len(extra)
-        elif len(words) >= 2 and words[0] == "class" and words[1] == DCLINECOST_CLASS:
+        elif len(words) >= 2 and words[0] == "class" and words[1] in (DCLINECOST_CLASS,STORAGE_CLASS):
             pass
         elif len(words) >= 2 and words[0] == "class" and words[1] == GEODATA_CLASS:
             geoclass = [part.split()[-1] for part in body.split(";")
@@ -3010,6 +3149,8 @@ def _parse_glm(text):
                 geoobjects.append(_glm_props(body))
             elif oclass == DCLINECOST_CLASS:
                 dccosts.append(_glm_props(body))
+            elif oclass == STORAGE_CLASS:
+                stores.append(_glm_props(body))
             elif oclass in _SOLVER_CLASSES:
                 props = _glm_props(body)
                 if ":" in words[1] and "name" not in props:
@@ -3097,6 +3238,18 @@ def _parse_glm(text):
         dclines = {_unquote(props.get("name",f"pp_dcline_{n+1}")):n
             for n,props in enumerate(objects["dcline"])}
         data["dclinecost"] = _glm_costs(dccosts,dclines)
+    if stores:
+        data["storage"] = []
+        for n,props in enumerate(stores):
+            parent = _unquote(props.get("parent",""))
+            if parent not in names["gen"]:
+                raise CaseError(f"{STORAGE_CLASS} object {n+1} parent '{parent}' is not a gen")
+            try:
+                row = [names["gen"][parent]+1] + [_glm_number(props[c["name"]],c["kind"],c["options"])
+                    if c["name"] in props else c["default"] for c in COLUMNS["storage"][1:]]
+            except CaseError as err:
+                raise CaseError(f"{STORAGE_CLASS} object {n+1}: {err}") from err
+            data["storage"].append(row)
     notes = []
     if geoobjects:
         geodata,tags = _glm_geodata(geodata,geoclass,geoobjects,names["bus"],notes)

@@ -304,7 +304,17 @@ API key to start sessions; tests use a fake client).
   with or without `automatic_sparse_dispatch`; 24 steps did not fit in
   7 GB), while the DC models are light (case118, 24 steps: about 1 s).
 
-- Solve progress and stop (decision #62, issue #130, `ppedit/_solveproc.py`):
+- Storage (decision #62, issue #128): `COLUMNS["storage"]`, cascades in
+  `set_value`/`add_row`/`delete_rows`, `_dump_glm_storage` (`pp_storage`
+  runtime class), `_series_input` `storage` in `case.py`;
+  `_storage_units`/`_charge_gens`/`_storage_constraints`/`_storage_step`
+  in `_cvxopf.py` (ppedit's own model, not cvxopf's single-bus storage
+  devices: the discharge is the generator's `Pg`, the charge an added
+  generator stripped from the results); `storageBlock` in `app.js`.
+  Multistep and the default preparation only; step area totals do not
+  count charging.
+
+- Solve progress and stop (decision #63, issue #130, `ppedit/_solveproc.py`):
   server `CVXOPF-*` solves run in a child process (`job` of `Case.solve`;
   the test fixtures go through it too, about 1 s per solve). Progress
   from IPOPT comes from an `intermediate` method added to CVXPY's

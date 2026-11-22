@@ -333,6 +333,16 @@ GridLAB-D has no DC line cost class, so `dclinecost` rows are written as
 properties, parent the DC line) and read back from them; GridLAB-D keeps
 them but does not solve with them.
 
+Storage (the `storage` table, ppedit's own) is discharged through a
+generator (`gen_i`, its row counted from 1) and charges at bus `bus_i`, or
+through the same generator (negative output) when `bus_i` is -1. Each row
+gives the starting, minimum, maximum and final energy (`Es`, `Emin`,
+`Emax`, `Eend`, MWh; `Eend` -1 leaves it free), the power rating `Smax`,
+the charge and discharge efficiencies, the self-discharge per month and an
+aging cost per MWh of throughput. Only multistep CVXOPF OPF models it: the
+Results tab then shows each step's charge, discharge and stored energy.
+GLM files store it as `pp_storage` objects (a runtime class).
+
 Areas follow the PYPOWER `areas` format (`area`, `price_ref_bus`; see
 `pypower.caseformat`) and list the areas named by the bus `area` column.
 Each area may also have a `name` (free text, e.g. a balancing authority
