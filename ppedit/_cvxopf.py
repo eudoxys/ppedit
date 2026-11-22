@@ -138,6 +138,9 @@ formulations they apply to (cvxopf rejects some elsewhere, e.g. a
 
 TEMPORAL_ASSEMBLIES = ("vectorized","stepwise")
 
+HOURS_PER_MONTH = 730.0
+"""Hours per month of the storage `self_discharge` rate (cvxopf's value)"""
+
 MAX_CONSTRAINTS = 20
 """Most constraints listed in a warning's `detail`"""
 
@@ -300,6 +303,11 @@ def _hvdc_links(ppc,note):
     return links,rows
 
 EXPLAIN = {
+    "storage_cut":"A storage unit discharges through its generator and charges at its "
+        "charging bus. When that generator is out of service or at an isolated bus, or the "
+        "charging bus is isolated, the unit cannot exchange energy with the network, so it is "
+        "left out of the solve (no charge, discharge or stored energy). Put the generator in "
+        "service, or set the storage status to OUT to make this explicit.",
     "reactive_cost":"PYPOWER cases can give a second set of gencost rows that price "
         "generator reactive power. cvxopf's objective has real power costs only, so these "
         "rows are dropped: the dispatch does not account for the cost of reactive power and "
@@ -591,8 +599,9 @@ def _series_frames(series,live,rows,formulation):
         out["df_hvdc_max"] = pd.DataFrame({f"dcline-{n+1}":-pmin[:,n] for n in rows})
     return out
 
-def _gen_limits(build,series,gen,gkeep,base):
-    """Add the per-step generator limits of `series["gen_limited"]` rows to `build`"""
+def _gen_limits(build,series,gen,gkeep,base,extra_gens=0):
+    """Add the per-step generator limits of `series["gen_limited"]` rows to
+    `build` (`extra_gens`: storage charging generators after the kept ones)"""
     import cvxpy as cp # pylint: disable=import-outside-toplevel
     pg = build.variables["Pg"]
     T = int(series["T"])
@@ -607,10 +616,84 @@ def _gen_limits(build,series,gen,gkeep,base):
             for t in range(T):
                 extra += [pg[t][k] <= pmax[t,n]/base,pg[t][k] >= pmin[t,n]/base]
             continue
-        x = pg[k,:] if pg.shape == (int(gkeep.sum()),T) else pg[:,k]
+        x = pg[k,:] if pg.shape == (int(gkeep.sum()) + extra_gens,T) else pg[:,k]
         extra += [x <= pmax[:,n]/base,x >= pmin[:,n]/base]
     if extra:
         build.prob = cp.Problem(build.prob.objective,list(build.prob.constraints) + extra)
+
+def _pg_column(pg,k,T,ng):
+    """CVXPY expression of the `T` per-step outputs of kept generator `k`
+    (`ng` kept generators) from cvxopf's `Pg` variable (vectorized: one
+    matrix; stepwise: one vector per step)"""
+    import cvxpy as cp # pylint: disable=import-outside-toplevel
+    if isinstance(pg,(list,tuple)):
+        return cp.hstack([pg[t][k] for t in range(T)])
+    return pg[k,:] if pg.shape == (ng,T) else pg[:,k]
+
+def _storage_units(series,ppc,gkeep,live,note):
+    """Return the storage of `series["storage"]` that can be modeled, each
+    with `k` (its generator among the kept ones) and `cbus` (charging bus
+    number); notes the rows left out"""
+    gen,bus = ppc["gen"],ppc["bus"]
+    kept = np.cumsum(gkeep) - 1
+    ids = set(bus[live,0].astype(int))
+    out,skipped = [],[]
+    for unit in series.get("storage") or []:
+        g = unit["gen"]
+        cbus = int(gen[g,0]) if unit["bus"] is None else unit["bus"]
+        if not gkeep[g] or gen[g,7] == 0 or cbus not in ids:
+            skipped.append(unit)
+            continue
+        out.append(dict(unit,k=int(kept[g]),cbus=cbus))
+    if skipped:
+        note(f"Storage row(s) {', '.join(str(u['row']+1) for u in skipped)} not modeled: "
+            "its generator is out of service or at an isolated bus, or its charging bus is isolated",
+            _detail("storage_cut",[_row("storage left out (no charge or discharge)",
+            f"storage {u['row']+1}","storage",u["row"]) for u in skipped]))
+    return out
+
+def _charge_gens(cgen,gencost,units,bus):
+    """Append one charging generator per storage unit to `cgen` (output
+    -Smax..0 at its charging bus, no reactive power) and zero cost rows to
+    `gencost`"""
+    vm = {int(b[0]):float(b[7]) for b in bus}
+    rows,costs = [],[]
+    for u in units:
+        row = np.zeros(cgen.shape[1])
+        row[0],row[5],row[6],row[7] = u["cbus"],vm.get(u["cbus"],1.0),cgen[u["k"],6],1
+        row[9] = -u["Smax"]
+        rows.append(row)
+        cost = np.zeros(gencost.shape[1])
+        cost[0],cost[3] = 2,gencost.shape[1] - 4
+        costs.append(cost)
+    return np.vstack([cgen]+rows),np.vstack([gencost]+costs)
+
+def _storage_constraints(build,units,T,delta,base,ng):
+    """Add the storage energy balance to `build` (`ng` kept generators, the
+    charging generators after them) and return each unit's energy variable,
+    discharge and charge expressions (MW)"""
+    import cvxpy as cp # pylint: disable=import-outside-toplevel
+    pg = build.variables["Pg"]
+    ntot = ng + len(units)
+    extra,cost,out = [],0,[]
+    for j,u in enumerate(units):
+        d = base*_pg_column(pg,u["k"],T,ntot)
+        c = -base*_pg_column(pg,ng+j,T,ntot)
+        e = cp.Variable(T,name=f"storage_{u['row']+1}_E")
+        keep = (1 - u["self_discharge"])**(delta/HOURS_PER_MONTH)
+        net = delta*(u["eta_ch"]*c - d/u["eta_dis"])
+        extra += [d >= 0,d <= u["Smax"],e >= u["Emin"],e <= u["Emax"],
+            e[0] == keep*u["Es"] + net[0]]
+        if T > 1:
+            extra.append(e[1:] == keep*e[:-1] + net[1:])
+        if u["Eend"] >= 0:
+            extra.append(e[T-1] == u["Eend"])
+        if u["aging"]:
+            cost = cost + u["aging"]*delta*cp.sum(c + d)
+        out.append(e)
+    build.prob = cp.Problem(cp.Minimize(build.prob.objective.expr + cost),
+        list(build.prob.constraints) + extra)
+    return out
 
 def runopf(ppc:dict,formulation:str,log,options:dict|None=None,series:dict|None=None) -> dict:
     """Solve `ppc` with the cvxopf `formulation` (see the module docstring)
@@ -685,8 +768,14 @@ def runopf(ppc:dict,formulation:str,log,options:dict|None=None,series:dict|None=
             if gkeep[n]:
                 cgen[kept[n],9] = float(np.min(np.asarray(series["gen_Pmin"])[:,n]))
                 cgen[kept[n],8] = float(np.max(np.asarray(series["gen_Pmax"])[:,n]))
+    ccost = gencost[gkeep]
+    units = _storage_units(series,ppc,gkeep,live,note) if series else []
+    if units:
+        if opts["preparation"] != "default":
+            raise ValueError("storage needs the default cvxopf preparation")
+        cgen,ccost = _charge_gens(cgen,ccost,units,bus)
     case = {"version":"2","baseMVA":float(ppc["baseMVA"]),"bus":bus[live],
-        "gen":cgen,"branch":branch[bkeep],"gencost":gencost[gkeep]}
+        "gen":cgen,"branch":branch[bkeep],"gencost":ccost}
     links,rows = [],[]
     if "dcline" in ppc:
         if formulation == "singlenode_dc":
@@ -727,13 +816,24 @@ def runopf(ppc:dict,formulation:str,log,options:dict|None=None,series:dict|None=
                 options=build_options,**{"automatic_sparse_dispatch":True,**ms_build}, # issue #122
                 **_series_frames(series,live,rows,formulation))
             if series.get("gen_limited"):
-                _gen_limits(build,series,gen,gkeep,float(ppc["baseMVA"]))
+                _gen_limits(build,series,gen,gkeep,float(ppc["baseMVA"]),len(units))
+            energy = _storage_constraints(build,units,int(series["T"]),float(series["delta"]),
+                float(ppc["baseMVA"]),int(gkeep.sum())) if units else []
         else:
             build = build_opf(case,formulation=formulation,hvdc=links or None,options=build_options,
                 automatic_sparse_dispatch=True) # issue #122: keep CVXPY's sparse derivatives
         with _capture_output(log,opts["verbose"]):
             build.solve(**kwargs)
         res = extract_results(build)
+        stored = None
+        if units:  # take the charging generators out of the results
+            ng = int(gkeep.sum())
+            pgs = np.asarray(res["Pg"],dtype=float).reshape(int(series["T"]),-1)
+            stored = {"dis":pgs[:,[u["k"] for u in units]],"ch":-pgs[:,ng:],
+                "E":[None if e.value is None else np.ravel(e.value) for e in energy]}
+            res = dict(res,Pg=pgs[:,:ng])
+            if res.get("Qg") is not None:
+                res["Qg"] = np.asarray(res["Qg"],dtype=float).reshape(int(series["T"]),-1)[:,:ng]
         recovered = None
         if formulation == "socp" and res["status"] in ACCEPTED_SOLVER_STATUSES:
             from cvxopf import recover_socp_voltage # pylint: disable=import-outside-toplevel
@@ -778,12 +878,30 @@ def runopf(ppc:dict,formulation:str,log,options:dict|None=None,series:dict|None=
     for t in range(int(series["T"])):
         step = fill(t)
         step.update({"baseMVA":ppc["baseMVA"],"success":success,"flows":out["flows"]})
+        step["storage"] = _storage_step(series,units,stored,t,success)
         if success:
-            step["f"] = _step_cost(ppc,step["gen"],step.get("dcline"),gkeep)
+            step["f"] = _step_cost(ppc,step["gen"],step.get("dcline"),gkeep) \
+                + sum(x["cost"] for x in step["storage"])
         out["steps"].append(step)
     out.update({k:out["steps"][0][k] for k in ("bus","gen","branch","dcline") if k in out["steps"][0]})
     if success:
         out["f"] = float(res["objective"])
+    return out
+
+def _storage_step(series,units,stored,t,success) -> list:
+    """Storage results of step `t`: one row per `storage` table row"""
+    by_row = {u["row"]:j for j,u in enumerate(units)}
+    out = []
+    for n in range(int(series.get("storage_rows",0))):
+        row = {"row":n,"solved":False,"Pdis":0.0,"Pch":0.0,"E":None,"cost":0.0}
+        j = by_row.get(n)
+        if j is not None and success and stored is not None:
+            u = units[j]
+            dis,ch = float(stored["dis"][t,j]),float(stored["ch"][t,j])
+            e = stored["E"][j]
+            row.update(solved=True,Pdis=dis,Pch=ch,E=None if e is None else float(e[t]),
+                cost=u["aging"]*(abs(ch) + abs(dis)))
+        out.append(row)
     return out
 
 def _fill(ppc,formulation,res,recovered,t,success,live,gkeep,bkeep,rows) -> dict:
