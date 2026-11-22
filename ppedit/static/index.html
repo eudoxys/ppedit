@@ -74,8 +74,8 @@
   <button data-view="multistep" title="Time series of case values for multistep OPF">Multistep <span class="count" id="series-count"></span></button>
   <button data-view="results">Results <span class="status-dot" id="result-dot"></span></button>
   <button data-view="issues">Issues <span class="count issues" id="issue-count"></span><span class="status-dot" id="issue-dot"></span></button>
-  <button data-view="claude" title="Claude sessions that edit the case">Claude <span class="status-dot" id="claude-dot"></span></button>
-  <button data-view="settings" title="Settings: baseMVA and version, display precision, cvxopf solve options">Settings</button>
+  <button data-view="agent" title="Agent sessions that edit the case">Agent <span class="status-dot" id="agent-dot"></span></button>
+  <button data-view="settings" title="Settings: baseMVA and version, display precision, cvxopf solve options, agents">Settings</button>
 </nav>
 
 <main id="main">
@@ -195,9 +195,11 @@
       <div id="cvxopf-settings" class="settings-group" hidden></div>
       <h2 id="multistep-title" hidden>CVXOPF multistep options</h2>
       <div id="multistep-settings" class="settings-group" hidden></div>
+      <h2>Agents</h2>
+      <div id="agent-settings" class="settings-group"></div>
     </div>
   </section>
-  <section id="view-claude" class="view">
+  <section id="view-agent" class="view">
     <div class="claude-tools">
       <input id="claude-title" placeholder="Session title (optional)" size="22">
       <select id="claude-model" title="Claude model"></select>

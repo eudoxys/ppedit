@@ -67,7 +67,7 @@ make docs
 ppedit serve ppedit/_test/data/case3.glm   # manual UI check
 ```
 
-Nothing needs network or credentials (the Claude tab needs an Anthropic
+Nothing needs network or credentials (the Agent tab needs an Anthropic
 API key to start sessions; tests use a fake client).
 
 ## Known rough edges (don't "fix" silently; mention or ask)
@@ -325,7 +325,8 @@ API key to start sessions; tests use a fake client).
   `watchSolve` in `app.js` polls `/api/solve/progress` with `background`
   and sets `busy.detail`/`busy.stop`.
 
-- Claude tab (`ppedit/claude.py`, `renderClaude` in `app.js`): sessions
+- Agent tab (formerly Claude, issue #133; view `agent`, `?view=claude` still
+  accepted; `ppedit/claude.py`, `renderClaude` in `app.js`): sessions
   call the Messages API with `urllib` (no SDK dependency) in background
   threads; each tool call that changes the case is one `Editor.edit()`
   under `editor.lock` (an `RLock`). The page polls `GET /api/claude` each
@@ -334,6 +335,12 @@ API key to start sessions; tests use a fake client).
   server-side `web_search_20250305` tool (must be enabled for the API
   organization); `fetch_url` and local file reads run in the ppedit
   server, local reads confined to the session's `root`.
+  Agent settings (decision #64, `renderAgentSettings`/`agentOptions()` in
+  `app.js`, `ppedit.agent` in `localStorage`): agent (`AGENTS`, only
+  `claude`) and API key source, sent as `agent`/`api_key`/`api_key_file`
+  of `/api/claude/new`. The key is resolved when the session starts, kept
+  in `Session._key`, and must never appear in `to_dict()`/`summary()` or
+  error messages. The routes, module and `claude-*` ids keep their names.
 
 ## Working rules
 

@@ -33,7 +33,7 @@ Update this file in the same PR that adds, moves, or deletes a file.
 - Change geodata handling or map layers: `Case.load_geodata`/`_geo_*` helpers in `ppedit/case.py`; `geoLayout`/`renderMap` in `ppedit/static/app.js`; `ppedit/_test/test_geodata.py`
 - Add a CLI command or option: `ppedit/cli.py`, `ppedit/__init__.py` Syntax section, `README.md`
 - Refresh the PYPOWER example cases: `python3 examples/import_pypower_cases.py` (after upgrading `pypower`)
-- Change the Claude sessions (tools, data sources, models): `ppedit/claude.py`; `/api/claude*` routes in `ppedit/server.py`; Claude section of `ppedit/static/app.js`; `ppedit/_test/test_claude.py`
+- Change the Agent tab sessions (tools, data sources, models, API key): `ppedit/claude.py`; `/api/claude*` routes in `ppedit/server.py`; claude section and `renderAgentSettings` of `ppedit/static/app.js`; `ppedit/_test/test_claude.py`
 - Change a design decision or resolve an open question: `DESIGN.md` (never renumber decisions)
 - Release: `pyproject.toml` version; see the eudoxys-package skill checklist
 
@@ -53,7 +53,7 @@ Update this file in the same PR that adds, moves, or deletes a file.
 | `ppedit/server.py` | `create_app()`, `Editor` (undo/redo), JSON API, `about()` package metadata | tested by `_test/test_server.py` |
 | `ppedit/static/index.html` | editor page layout | |
 | `ppedit/static/style.css` | editor styles | |
-| `ppedit/static/app.js` | editor logic: tables, network diagram (simple, classic and one-line styles; force and geodata layouts with map layers; labels menu), results, issues, Claude sessions | checked by hand (see `CLAUDE.md`) |
+| `ppedit/static/app.js` | editor logic: tables, network diagram (simple, classic and one-line styles; force and geodata layouts with map layers; labels menu), results, issues, Agent sessions, settings | checked by hand (see `CLAUDE.md`) |
 | `ppedit/.gitignore` | generated-output ignores | |
 
 ## Tests
