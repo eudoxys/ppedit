@@ -166,7 +166,10 @@ const BUSY_LABELS = [  // [path prefix, label], first match wins
   ["/api/table/export", "Exporting rows"], ["/api/folders", "Listing folders"], ["/api/state", "Loading"],
   ["/api/meta", "Loading"], ["/api/series/import", "Importing series"], ["/api/series/export", "Exporting series"],
 ];
-const busy = { items: new Map([[0, { label: "Loading", t0: performance.now() }]]), next: 1, timer: null, tick: null };
+// `busy.detail` (text after the seconds) and `busy.stop` (a function; shows
+// the Stop button) are set by the solve action from /api/solve/progress.
+const busy = { items: new Map([[0, { label: "Loading", t0: performance.now() }]]), next: 1, timer: null, tick: null,
+  detail: "", stop: null };
 function busyLabel(path) { return (BUSY_LABELS.find(([p]) => path.startsWith(p)) || [null, "Working"])[1]; }
 function busyStart(path) {
   const id = busy.next++;
@@ -188,7 +191,11 @@ function busyRefresh() {
   if (busy.timer) return;  // still within BUSY_DELAY
   const oldest = [...busy.items.values()].reduce((a, b) => (a.t0 <= b.t0 ? a : b));
   const ms = performance.now() - oldest.t0;
-  el.querySelector(".busy-text").textContent = oldest.label + "…" + (ms >= BUSY_ELAPSED ? ` ${Math.floor(ms / 1000)} s` : "");
+  el.querySelector(".busy-label").textContent = oldest.label + "…" + (ms >= BUSY_ELAPSED ? ` ${Math.floor(ms / 1000)} s` : "")
+    + (busy.detail ? ` · ${busy.detail}` : "");
+  const stop = el.querySelector(".busy-stop");
+  stop.hidden = !busy.stop;
+  stop.onclick = busy.stop;
   el.hidden = false; document.body.classList.add("busy");
   if (!busy.tick) busy.tick = setInterval(busyRefresh, 1000);
 }
@@ -3330,6 +3337,39 @@ function confirmDiscard() {
   return !S.state.dirty || confirm("Discard unsaved changes?");
 }
 
+// Solver progress while /api/solve is pending (issue #130): polls
+// /api/solve/progress (background, so it does not count as work) and puts
+// its text (phase, or IPOPT iteration and infeasibility) and a Stop button
+// for stoppable (CVXOPF-*) solves into the busy indicator. Returns the
+// function that ends the polling.
+const SOLVE_POLL = 1000;
+function watchSolve() {
+  let done = false, timer = null;
+  const stop = async () => {
+    const b = $("#busy .busy-stop");
+    b.disabled = true;
+    try { await api("/api/solve/stop", {}, { background: true }); busy.detail = "stopping"; busyRefresh(); }
+    catch (e) { toast(e.message, true); b.disabled = false; }
+  };
+  const poll = async () => {
+    timer = null;
+    try {
+      const p = await api("/api/solve/progress", undefined, { background: true });
+      if (done) return;
+      busy.detail = p.running ? (p.stopping ? "stopping" : p.text || "") : "";
+      busy.stop = p.running && p.stoppable && !p.stopping ? stop : null;
+      busyRefresh();
+    } catch (_) { /* the solve request reports errors */ }
+    if (!done) timer = setTimeout(poll, SOLVE_POLL);
+  };
+  timer = setTimeout(poll, SOLVE_POLL);
+  return () => {
+    done = true; clearTimeout(timer);
+    busy.detail = ""; busy.stop = null;
+    const b = $("#busy .busy-stop"); b.disabled = false; b.hidden = true;
+  };
+}
+
 async function onAction(btn) {
   const a = btn.dataset.action;
   closeMenus();
@@ -3354,15 +3394,18 @@ async function onAction(btn) {
       caret.textContent = "●";
       trigger.title = SOLVING;
       renderChrome();
+      const watch = watchSolve();
       try {
         await act("/api/solve", solveRequest(btn.dataset.kind, btn.dataset.algorithm, !!btn.dataset.multistep));
         const r = S.state.result;
         const what = (r.multistep ? `${r.multistep.steps}-step ` : "") + (r.dc ? "DC " : "") + r.kind.toUpperCase() + (r.solver ? ` (${r.solver.replace(/^(AC|DC): /, "")})` : "");
         const nwarn = (r.messages || []).filter(m => m.level === "warning").length;
-        toast(r.success ? `${what} converged` + (nwarn ? ` with ${nwarn} warning(s) — see Issues` : "")
+        toast(r.stopped ? `${what} stopped — the case is unchanged`
+          : r.success ? `${what} converged` + (nwarn ? ` with ${nwarn} warning(s) — see Issues` : "")
           : `${what} did not converge — see Issues and Results`, !r.success);
         if (S.view !== "network") show("results"); else renderNetwork();
       } finally {
+        watch();
         trigger.disabled = false;
         trigger.classList.remove("solving");
         caret.textContent = "▾";
@@ -3794,7 +3837,9 @@ async function init() {
   // (with ?algorithm=NAME, else the default solver) and ?view=NAME opens that tab
   const qs = new URLSearchParams(location.search);
   if (["pf", "opf"].includes(qs.get("solve"))) {
+    const watch = watchSolve();
     try { await act("/api/solve", solveRequest(qs.get("solve"), qs.get("algorithm"))); } catch (err) { toast(err.message, true); }
+    finally { watch(); }
   }
   const view = ({ tables: "case", series: "multistep" })[qs.get("view")] || qs.get("view");
   if (view && $(`#tabs [data-view="${view}"], #table-tabs [data-view="${view}"]`)) show(view);

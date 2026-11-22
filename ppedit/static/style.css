@@ -427,6 +427,14 @@ details summary { cursor: pointer; color: var(--muted); margin: 14px 0 6px; }
   background: var(--ink); color: #fff; padding: 4px 12px; border-radius: 12px;
   font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.2); white-space: nowrap;
 }
+.busy-text { display: flex; align-items: center; gap: 10px; }
+.busy-stop {
+  pointer-events: auto; cursor: pointer !important; font-size: 11px; padding: 1px 9px;
+  border: 1px solid #c98a8a; border-radius: 9px; background: #8a2e2e; color: #fff;
+}
+.busy-stop:hover { background: #a33a3a; }
+.busy-stop:disabled { opacity: .6; cursor: default !important; }
+.busy-stop[hidden] { display: none; }
 body.busy, body.busy * { cursor: progress !important; }
 @media (prefers-reduced-motion: reduce) { .busy-bar::before { animation-duration: 4s; } }
 

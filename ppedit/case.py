@@ -2103,7 +2103,7 @@ def {name}():
         return issues
 
     def solve(self,kind:str="pf",algorithm:str|None=None,options:dict|None=None,
-            multistep:bool=False) -> dict:
+            multistep:bool=False,job=None) -> dict:
         """Run a PYPOWER power flow (`pf`) or optimal power flow (`opf`)
 
         Arguments
@@ -2129,6 +2129,14 @@ def {name}():
           - `multistep`: solve the time series (`Case.series`) as one
             multistep OPF (issue #124); needs `opf`, a `CVXOPF-*` solver and
             a series (see below)
+
+          - `job`: `None`, or a `ppedit._solveproc.SolveJob`: a `CVXOPF-*`
+            solve then runs in a child process that reports its progress
+            to `job` (phase, IPOPT iteration and infeasibility) and that
+            `job.stop()` ends; the result is then a failure with `stopped`
+            true. Other solvers ignore `job` (they run in this process).
+            The server passes one with every solve (`/api/solve/progress`,
+            `/api/solve/stop`).
 
         Returns
         -------
@@ -2183,6 +2191,12 @@ def {name}():
         by the shared problem: there are no ramp limits, storage or other
         constraints between steps. `messages` cover the whole horizon.
         Other results have `multistep` `None`.
+
+        A failure has an error in `messages`, empty rows, and `stopped`
+        (true when `job.stop()` ended the solve). A solve run with `job`
+        whose child process dies (e.g. killed by the operating system for
+        lack of memory) fails with its exit code instead of stopping the
+        server.
 
         Buses with no in-service branch are solved as isolated (type NONE)
         without changing the case; `log` names them. DC lines are modeled
@@ -2320,7 +2334,11 @@ def {name}():
                     res["success"] = bool(success)
                 elif cvx:
                     from ppedit._cvxopf import runopf as cvxopf_runopf # pylint: disable=import-outside-toplevel
-                    res = cvxopf_runopf(ppc,OPF_SOLVERS[algorithm][2],log,cvx_options,series)
+                    if job is None:
+                        res = cvxopf_runopf(ppc,OPF_SOLVERS[algorithm][2],log,cvx_options,series)
+                    else:
+                        from ppedit import _solveproc # pylint: disable=import-outside-toplevel
+                        res = _solveproc.run(job,ppc,OPF_SOLVERS[algorithm][2],log,cvx_options,series)
                 else:
                     res = runopf(ppc,opt)
             except Exception as err: # pylint: disable=broad-exception-caught
@@ -2331,6 +2349,7 @@ def {name}():
             log.write("\n")
             message("error",f"{what} failed: {failed}")
             out = {"success":False,**info,"log":log.getvalue(),"messages":messages,
+                "stopped":type(failed).__name__ == "SolveStopped",
                 "bus":[],"gen":[],"branch":[],"dcline":[],"areas":[],"extended":{}}
             if series is not None:  # a failed multistep solve has no steps
                 out.update(steps=[],horizon_objective=None)

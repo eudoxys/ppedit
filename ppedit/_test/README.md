@@ -27,6 +27,7 @@ the README badge. Coverage is informational: no minimum is enforced.
 | `test_doctest.py` | examples in the `ppedit.case` docstring |
 | `test_examples.py` | every `examples/pypower/*.glm` holds the same data as its `.py` |
 | `test_cvxopf.py` | `CVXOPF-*` OPF solvers: AC matches PIPS, all formulations solve case9, isolated buses, piecewise-linear and reactive costs, DC line direction (skipped unless cvxopf is installed) |
+| `test_solveproc.py` | `CVXOPF-*` solves in a child process: same result as in process, progress phases and IPOPT iterations, errors, stop (stand-in child), a child killed without a result, `/api/solve/progress` and `/api/solve/stop` (solver tests skipped unless cvxopf is installed) |
 | `test_cli.py` | `convert` and `check` commands and error exit codes |
 | `test_areas.py` | `areas` table on `case30`: defaults rebuilt from bus areas, price reference bus, round trips, dropped on GLM output, not passed to the solver, renumber cascades, validation, per-area results (unlisted areas, isolated buses, DC line ties) |
 | `test_dcline.py` | `dcline` and `dclinecost` tables: load and round trips (including `gridlabd convert` GLM style), PF and OPF against the expected values of `pypower/t/t_dcline.py`, isolated terminals, validation, edit cascades |

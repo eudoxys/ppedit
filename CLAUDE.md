@@ -304,6 +304,17 @@ API key to start sessions; tests use a fake client).
   with or without `automatic_sparse_dispatch`; 24 steps did not fit in
   7 GB), while the DC models are light (case118, 24 steps: about 1 s).
 
+- Solve progress and stop (decision #62, issue #130, `ppedit/_solveproc.py`):
+  server `CVXOPF-*` solves run in a child process (`job` of `Case.solve`;
+  the test fixtures go through it too, about 1 s per solve). Progress
+  from IPOPT comes from an `intermediate` method added to CVXPY's
+  `Oracles` during the solve (`_ipopt_progress`, cvxpy 1.9 internals; it
+  stays out of the way if CVXPY ever defines one). The child's verbose
+  solver output reaches the log only when it finishes. Tests swap the
+  child code (`_solveproc._CHILD`) for a stand-in to stop or kill it.
+  `watchSolve` in `app.js` polls `/api/solve/progress` with `background`
+  and sets `busy.detail`/`busy.stop`.
+
 - Claude tab (`ppedit/claude.py`, `renderClaude` in `app.js`): sessions
   call the Messages API with `urllib` (no SDK dependency) in background
   threads; each tool call that changes the case is one `Editor.edit()`

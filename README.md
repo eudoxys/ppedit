@@ -226,7 +226,10 @@ In the editor:
     file can be imported again.
   - **Run PF ▾** and **Run OPF ▾** (toolbar) each open a menu of solvers;
     choosing one runs it; while it runs, the button's ▾ turns into ● and
-    the button is disabled until the solver returns. Run PF lists the PYPOWER power flow algorithms
+    the button is disabled until the solver returns. While a `CVXOPF-*`
+    solve runs, the busy label shows its phase or IPOPT iteration and
+    infeasibility, and a **Stop** button ends it (the case is unchanged).
+    Run PF lists the PYPOWER power flow algorithms
     (Newton, fast-decoupled XB and BX, Gauss-Seidel). Run OPF lists the
     OPF solvers that are installed: AC OPF with PIPS (interior point or
     step-controlled) and IPOPT (needs `pyipopt`), and DC OPF with PIPS,
