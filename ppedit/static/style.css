@@ -197,11 +197,11 @@ td.bad input { color: var(--err); }
 #net .dc-sym { fill: #fff; stroke: var(--dc); stroke-width: 1.2; pointer-events: none; }
 #net .dc-sym-text { fill: var(--dc); font-size: 7px; font-weight: 700; pointer-events: none; }
 #net .edge.sel { stroke: var(--accent); stroke-width: 3.5; }
-#net .node circle { stroke: #fff; stroke-width: 1.5; cursor: pointer; }
+#net .node circle, .bus-icon circle { stroke: #fff; stroke-width: 1.5; cursor: pointer; }
 #net .node.sel circle.body { stroke: var(--ink); stroke-width: 3; }
 #net .node text { font: 10px var(--mono); fill: var(--ink); pointer-events: none; paint-order: stroke; stroke: #fff; stroke-width: 3px; }
-#net .node .gen { fill: none; stroke: var(--accent-2); stroke-width: 1.6; }
-#net .node .load { stroke: #4b5652; stroke-width: 1.4; fill: #4b5652; }
+#net .node .gen, .bus-icon .gen { fill: none; stroke: var(--accent-2); stroke-width: 1.6; }
+#net .node .load, .bus-icon .load { stroke: #4b5652; stroke-width: 1.4; fill: #4b5652; }
 #net .node.err circle.body { stroke: var(--err); stroke-width: 3; }
 .legend {
   position: absolute; left: 12px; bottom: 12px; background: rgba(255,255,255,.94);
@@ -227,6 +227,9 @@ td.bad input { color: var(--err); }
 .dropdown.search button { display: flex; justify-content: space-between; gap: 12px; }
 .dropdown.search button:focus { background: var(--sel); outline: none; }
 .dropdown.search button .sub { color: var(--muted); font-size: 11px; white-space: nowrap; }
+/* #bus-menu options: bus symbol before the bus number (issue #141) */
+.dropdown.search button .lead { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.bus-icon { flex: none; overflow: visible; }
 /* areas */
 #net .node text.area-star { font-size: 13px; fill: var(--ink); stroke-width: 2px; }
 #net .area-box { fill-opacity: .05; stroke-width: 1.5; stroke-dasharray: 6 3; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
@@ -258,7 +261,7 @@ td.bad input { color: var(--err); }
 #net.geo.imagery { background: #2a2f2c; }
 #net.geo.imagery .edge:not(.sel):not(.out) { stroke: #fff6d5; }
 #net.geo.imagery .edge.dcline:not(.sel):not(.out) { stroke: #ebd2ff; }
-#net .node.nogeo .body { stroke-dasharray: 2 1.5; }
+#net .node.nogeo .body, .bus-icon .nogeo .body { stroke-dasharray: 2 1.5; }
 #net .map-bound { fill: none; vector-effect: non-scaling-stroke; pointer-events: none; }
 #net .map-bound.state { stroke: #6f7a75; stroke-width: 1.6; }
 #net .map-bound.county { stroke: #9aa39f; stroke-width: .8; stroke-dasharray: 4 2; }
@@ -273,11 +276,11 @@ td.bad input { color: var(--err); }
 #net .map-tile, #net .map-overlay { pointer-events: none; }
 #net .map-overlay { opacity: .8; }
 /* classic style */
-#net.classic .node .body { stroke: #3d4744; stroke-width: 1.4; cursor: pointer; }
-#net.classic .node.isolated .body { stroke: #7d8883; stroke-width: 1.6; stroke-dasharray: 2 1.5; }
+#net.classic .node .body, .bus-icon.classic .body { stroke: #3d4744; stroke-width: 1.4; cursor: pointer; }
+#net.classic .node.isolated .body, .bus-icon.classic .isolated .body { stroke: #7d8883; stroke-width: 1.6; stroke-dasharray: 2 1.5; }
 #net.classic .node.sel .body { stroke: var(--ink); stroke-width: 3; }
 #net.classic .node.err .body { stroke: var(--err); stroke-width: 3; }
-#net.classic .node .ref-ring { fill: none; stroke: #3d4744; stroke-width: 1.2; pointer-events: none; }
+#net.classic .node .ref-ring, .bus-icon.classic .ref-ring { fill: none; stroke: #3d4744; stroke-width: 1.2; pointer-events: none; }
 #net.classic .node text.ol-label { font: 10px var(--mono); fill: #3d4744; paint-order: stroke; stroke: #fff; stroke-width: 3px; }
 #net.classic .node text.ol-label .num { font-weight: 700; font-size: 11px; fill: var(--ink); }
 #net.classic .node text.ol-label .gen-mw { fill: #1f5f9e; }
