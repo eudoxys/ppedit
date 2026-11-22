@@ -39,6 +39,7 @@ open case was read, see `ppedit.Case.source`, or `null`), and `loads_off`
     `table_read_formats`: those and the other pandas formats
     `POST /api/table/import` and `POST /api/series/import` read, see
     `ppedit._tableio`),
+    `app_name` (the name the page shows, `ppedit.branding.APP_NAME`),
     solvers (`ppedit.case.solvers`: the PF algorithms,
     the installed OPF solvers and the cvxopf solve option choices), version,
     `about` (package metadata shown when the page's "ppedit" title is
@@ -194,11 +195,13 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+from html import escape as html_escape
 
 from flask import Flask, jsonify, request, send_from_directory, Response, redirect
 
 from ppedit.case import Case, CaseError, COLUMNS, RESULT_COLUMNS, TABLES, FORMATS, INPUT_FORMATS, \
     builtin_cases, solvers, writable_format
+from ppedit import branding
 from ppedit.claude import Sessions
 from ppedit._solveproc import SolveJob, describe
 from ppedit._tableio import table_formats, table_read_formats, read_rows, dump_rows, \
@@ -274,6 +277,16 @@ def _source_text(dists,*names) -> str:
             with open(path,encoding="utf-8") as fh:
                 return fh.read()
     return ""
+
+def app_page(html:str) -> str:
+    """Put the editor name of `ppedit.branding` into the page `html`
+
+    `{{APP_NAME}}` becomes `branding.APP_NAME` and `{{APP_BRAND}}` the
+    top-bar title, `APP_MARK` in the accent color (HTML escaped)."""
+    name = branding.APP_NAME or "ppedit"
+    mark = branding.APP_MARK if branding.APP_MARK and name.startswith(branding.APP_MARK) else ""
+    brand = (f'<span class="mark">{html_escape(mark)}</span>' if mark else "") + html_escape(name[len(mark):])
+    return html.replace("{{APP_BRAND}}",brand).replace("{{APP_NAME}}",html_escape(name))
 
 def about() -> dict:
     """Package metadata shown by the editor's "ppedit" title
@@ -725,7 +738,10 @@ def create_app(case:Case|None=None,path:str|None=None,allow_remote:bool=False,
 
     @app.get("/")
     def index():
-        return no_cache(send_from_directory(STATIC,"index.html"))
+        res = no_cache(send_from_directory(STATIC,"index.html"))
+        res.direct_passthrough = False
+        res.set_data(app_page(res.get_data(as_text=True)))
+        return res
 
     @app.get("/static/<path:name>")
     def static_file(name):
@@ -737,7 +753,7 @@ def create_app(case:Case|None=None,path:str|None=None,allow_remote:bool=False,
         return jsonify(columns=COLUMNS,result_columns=RESULT_COLUMNS,tables=TABLES,
             builtin=builtin_cases(),
             formats=list(FORMATS.values()),input_formats=list(INPUT_FORMATS.values()),
-            table_formats=table_formats(),table_read_formats=table_read_formats(),solvers=solvers(),version=__version__,about=about(),
+            table_formats=table_formats(),table_read_formats=table_read_formats(),solvers=solvers(),version=__version__,about=about(),app_name=branding.APP_NAME or "ppedit",
             instance=instance,token=token)
 
     @app.get("/api/ping")

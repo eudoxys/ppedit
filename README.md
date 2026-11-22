@@ -411,6 +411,22 @@ and `coverage-report` artifact of the Validation workflow). The report for
 `main` is published at https://www.eudoxys.com/ppedit/coverage/ and feeds
 the Coverage badge above.
 
+## Change the displayed name
+
+The browser page shows the name `ppedit` in the window title, the top-bar
+title, tooltips, server status dialogs and messages, and the About dialog
+heading. To show another name, edit `ppedit/branding.py`:
+
+```python
+APP_NAME = "GridEdit"   # the name shown in the page (default "ppedit")
+APP_MARK = "Grid"       # leading part drawn in the accent color ("" for none)
+```
+
+and restart `ppedit serve`. The name only changes what the page shows: the
+package, the `ppedit` command, saved browser settings, and the copyright,
+license and funding acknowledgment in the About dialog stay as they are,
+and the About dialog adds "Based on ppedit." when the name differs.
+
 # Examples
 
 ## PYPOWER cases
