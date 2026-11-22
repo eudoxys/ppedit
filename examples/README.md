@@ -126,12 +126,13 @@ column and keep their case `Pmax`.
 with a negative `Pmin` (43 rows; read it on the Case tab with *Storage ›
 Import…*). Each storage unit discharges through that generator and charges
 through it too (`bus_i` -1, no load charges it). Its rating `Smax` is the
-generator's `Pmax`, or `-Pmin` where `Pmax` is 0. Its capacity `Emax` is
-4 hours at `Smax`, except 24 hours for generator rows 3, 5 and 6 (the
-pumped hydro units, which are out of service with `Pmax` 0 in the case,
-so they are not modeled until they are put in service with a `Pmax`).
-The other columns are the table defaults: empty at the start (`Es` 0),
-free at the end, lossless, aging 0.01 $/MWh. Storage changes how these
-generators run: they can only deliver energy they charged earlier in the
-horizon, so a multistep OPF of the first day of August costs more than the
-same OPF without the storage rows, where they generate freely.
+generator's `Pmax`, or `-Pmin` where `Pmax` was 0; those generators are
+in service in the case with `Pmax` = `Smax`. Rows 3, 5 and 6 are taken as
+pumped hydro: 24 hours of capacity at `Smax`, `eta_ch` 0.8, `eta_dis` 0.9,
+no self-discharge, the default aging cost (0.01 $/MWh). The other 40 are
+taken as batteries: 4 hours, `eta_ch` and `eta_dis` 0.9, `self_discharge`
+0.02 per month, aging 5 $/MWh. Every unit starts and must end half full
+(`Es` = `Eend` = `Emax`/2). The case's `generation` series gives the
+`Pmax` of 42 of these generators by hour and replaces the case `Pmax` in
+a multistep OPF; it is 0 for the pumped hydro rows, so they do not
+discharge there unless those series columns are changed.
