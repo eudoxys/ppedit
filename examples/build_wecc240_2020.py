@@ -2,8 +2,12 @@
 
 Syntax: python3 examples/build_wecc240_2020.py [CASE] [--check]
 
-Rebuilds, in `CASE` (default `examples/wecc240_2020.py`), the data that
-comes from the other `examples/` files, and saves the case in place:
+First writes `wecc240_2020_reactive_load.csv` from
+`wecc240_2020_real_load.csv` at the power factor of each bus in the case
+bus table: `Qd(t) = Pd(t) * Qd / Pd` (0 where the case `Pd` is 0), rounded
+to 4 decimals like the real load. Then rebuilds, in `CASE` (default
+`examples/wecc240_2020.py`), the data that comes from the other `examples/`
+files, and saves the case in place:
 
   1. `storage`: the rows of `wecc240_storage.csv` (replacing any); each
      storage generator (`gen_i`) is put in service with `Pmax` = `Smax`.
@@ -16,7 +20,8 @@ comes from the other `examples/` files, and saves the case in place:
          storage generators have none and keep their case `Pmax`; see
          `build_wecc240_generation.py`).
 
-Then it checks that every series reads back unchanged from its file, that
+Then it checks that the reactive load follows the real load at the case
+power factors, that every series reads back unchanged from its file, that
 the three combine by time into one horizon with no column given twice, and
 that the case validates without errors. `--check` runs only the checks,
 without changing or saving the case.
@@ -46,6 +51,25 @@ def _read(name):
     """Return the step labels, columns and rows of a series file in `examples/`"""
     with open(os.path.join(HERE,name),"rb") as fh:
         return read_series(name,fh.read())
+
+def reactive_ratios(case,columns):
+    """Return the case `Qd/Pd` of the buses of the real load `columns` (0 where `Pd` is 0)"""
+    bus = {r[0]:r for r in case.tables["bus"]}
+    out = []
+    for col in columns:
+        row = bus[int(col.split(".")[2])]
+        out.append(row[3]/row[2] if row[2] else 0.0)
+    return out
+
+def write_reactive(case):
+    """Write `wecc240_2020_reactive_load.csv` from the real load at the case power factors"""
+    index,columns,rows = _read(SERIES[0][1])
+    ratio = reactive_ratios(case,columns)
+    with open(os.path.join(HERE,SERIES[1][1]),"w",newline="",encoding="utf-8") as fh:
+        out = csv.writer(fh,lineterminator="\n")
+        out.writerow(["time"] + [c.replace(".Pd.",".Qd.") for c in columns])
+        for label,row in zip(index,rows):
+            out.writerow([label] + [repr(round(p*k,4) + 0.0) for p,k in zip(row,ratio)])
 
 def load_storage(case):
     """Replace the storage rows with `wecc240_storage.csv`; put their generators in service"""
@@ -83,6 +107,14 @@ def check(case):
     problems = []
     def same(a,b):
         return len(a) == len(b) and all(math.isclose(x,y,rel_tol=1e-9,abs_tol=1e-9) for x,y in zip(a,b))
+    real,reactive = case.get_series(SERIES[0][0]),case.get_series(SERIES[1][0])
+    if real and reactive:
+        ratio = reactive_ratios(case,real["columns"])
+        if reactive["columns"] != [c.replace(".Pd.",".Qd.") for c in real["columns"]] \
+                or reactive["index"] != real["index"] \
+                or not all(math.isclose(q,p*k,abs_tol=1e-4) for rp,rq in zip(real["values"],reactive["values"])
+                    for p,q,k in zip(rp,rq,ratio)):
+            problems.append("reactive_load does not follow real_load at the case power factors")
     names = [s["name"] for s in case.series]
     if names != [n for n,_ in SERIES] + [PANEL[0]]:
         problems.append(f"series are {names}")
@@ -129,6 +161,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     case = Case.load(args.case)
     if not args.check:
+        write_reactive(case)
+        print(f"wrote {SERIES[1][1]}")
         print(f"storage: {load_storage(case)} rows")
         load_series(case)
     for ser in case.series:
