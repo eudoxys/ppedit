@@ -126,8 +126,8 @@ wecc240 `counties.csv`). The 14 generators in Mexico and Canada have no
 column and keep their case `Pmax`.
 
 `wecc240_storage.csv` has one `storage` row per `wecc240_2020.py` generator
-with a negative `Pmin` (43 rows; read it on the Case tab with *Storage ›
-Import…*). Each storage unit discharges through that generator and charges
+with a negative `Pmin` (43 rows; they are the case's storage table, and can
+be read into another case on the Case tab with *Storage › Import…*). Each storage unit discharges through that generator and charges
 through it too (`bus_i` -1, no load charges it). Its rating `Smax` is the
 generator's `Pmax`, or `-Pmin` where `Pmax` was 0; those generators are
 in service in the case with `Pmax` = `Smax`. Rows 3, 5 and 6 are taken as
@@ -138,3 +138,19 @@ taken as batteries: 4 hours, `eta_ch` and `eta_dis` 0.9, `self_discharge`
 (`Es` = `Eend` = `Emax`/2). The case's `generation` series (August of
 `wecc240_generation.csv.gz`) has no column for these generators, so their
 case `Pmax` holds in every step of a multistep OPF.
+
+`build_wecc240_2020.py` loads the data of `wecc240_2020.py` that comes from
+these files and saves the case in place:
+
+    python3 examples/build_wecc240_2020.py [CASE] [--check]
+
+It replaces the storage table with `wecc240_storage.csv` (putting each
+storage generator in service with `Pmax` = `Smax`) and all series with
+`real_load` (`wecc240_2020_real_load.csv`), `reactive_load`
+(`wecc240_2020_reactive_load.csv`) and `generation` (the same hours of
+`wecc240_generation.csv.gz`). It then checks that each series reads back
+unchanged from its file, that the three combine by time into the 744 hours
+of August with no column in two series, that the panel has no column for a
+storage generator, and that the case validates; on a problem it reports it
+and does not save. `--check` only runs the checks. Run it after changing
+any of those files (after `build_wecc240_generation.py` for the panel).
