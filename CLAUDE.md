@@ -277,6 +277,9 @@ API key to start sessions; tests use a fake client).
   series scale/offset (`_scale`) after it; every
   import goes through `openImportDialog(mode)` (`S.importChoice` keeps the
   choices, `S.importReq` carries them to `importRows`/`importSeries`).
+  File choosers match only a file's last extension, so `acceptList` lists
+  compressed formats by their compression suffix (`.gz`) and
+  `fileFormatOk` checks the whole name after the pick (`pickFormats`).
 
 - Extended result columns (decision #56, issue #108): `RESULT_COLUMNS` in
   `case.py` (PYPOWER array indexes), `extended` of `Case.solve`
