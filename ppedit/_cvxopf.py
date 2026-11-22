@@ -303,6 +303,11 @@ def _hvdc_links(ppc,note):
     return links,rows
 
 EXPLAIN = {
+    "storage_cut":"A storage unit discharges through its generator and charges at its "
+        "charging bus. When that generator is out of service or at an isolated bus, or the "
+        "charging bus is isolated, the unit cannot exchange energy with the network, so it is "
+        "left out of the solve (no charge, discharge or stored energy). Put the generator in "
+        "service, or set the storage status to OUT to make this explicit.",
     "reactive_cost":"PYPOWER cases can give a second set of gencost rows that price "
         "generator reactive power. cvxopf's objective has real power costs only, so these "
         "rows are dropped: the dispatch does not account for the cost of reactive power and "

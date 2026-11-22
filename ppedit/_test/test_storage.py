@@ -124,3 +124,12 @@ def test_storage_needs_multistep_and_default_preparation():
     assert any("not modeled" in m["message"] for m in r["messages"])
     with pytest.raises(CaseError,match="default cvxopf preparation"):
         case.solve("opf","CVXOPF-DC",{"preparation":"recommended"},multistep=True)
+
+@needs_cvxopf
+def test_storage_out_of_service_generator():
+    """Storage on an out-of-service generator is left out with a note, not an error"""
+    case = _case({"Eend":0},gen_status=0)
+    r = case.solve("opf","CVXOPF-DC",multistep=True)
+    assert r["success"] and r["steps"][0]["storage"][0]["solved"] is False
+    note = next(m for m in r["messages"] if "Storage row(s) 1 not modeled" in m["message"])
+    assert note["detail"]["constraints"][0]["table"] == "storage"

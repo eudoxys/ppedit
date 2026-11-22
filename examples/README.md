@@ -121,3 +121,17 @@ US generator elsewhere goes to the node its county's generation went to
 (wecc240 `county_node_map.csv`, the county named from the bus FIPS code by
 wecc240 `counties.csv`). The 14 generators in Mexico and Canada have no
 column and keep their case `Pmax`.
+
+`wecc240_storage.csv` has one `storage` row per `wecc240_2020.py` generator
+with a negative `Pmin` (43 rows; read it on the Case tab with *Storage ›
+Import…*). Each storage unit discharges through that generator and charges
+through it too (`bus_i` -1, no load charges it). Its rating `Smax` is the
+generator's `Pmax`, or `-Pmin` where `Pmax` is 0. Its capacity `Emax` is
+4 hours at `Smax`, except 24 hours for generator rows 3, 5 and 6 (the
+pumped hydro units, which are out of service with `Pmax` 0 in the case,
+so they are not modeled until they are put in service with a `Pmax`).
+The other columns are the table defaults: empty at the start (`Es` 0),
+free at the end, lossless, aging 0.01 $/MWh. Storage changes how these
+generators run: they can only deliver energy they charged earlier in the
+horizon, so a multistep OPF of the first day of August costs more than the
+same OPF without the storage rows, where they generate freely.
