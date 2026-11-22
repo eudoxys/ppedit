@@ -1,4 +1,7 @@
 // ppedit browser editor
+// APP_NAME: the editor name shown in the page (ppedit/branding.py; the server
+// puts it in <meta name="app-name">), used for every displayed "ppedit".
+const APP_NAME = document.querySelector('meta[name="app-name"]')?.content || "ppedit";
 "use strict";
 
 const S = {
@@ -232,7 +235,7 @@ async function api(path, body, { background = false } = {}) {
     try { res = await fetch(path, opts); }
     catch (_) {  // no HTTP response at all: the server stopped or cannot be reached (#51)
       if (path !== "/api/exit") serverDown();
-      const err = new Error("The ppedit server is not responding");
+      const err = new Error(`The ${APP_NAME} server is not responding`);
       err.network = true;
       throw err;
     }
@@ -349,7 +352,7 @@ function renderChrome() {
   const busy = claudeBusy();
   $("#agent-dot").className = "status-dot" + (busy ? " ok" : "");
   $("#agent-dot").title = busy ? "An agent session is working" : "";
-  document.title = `${st.dirty ? "• " : ""}${c.name} — ppedit`;
+  document.title = `${st.dirty ? "• " : ""}${c.name} — ${APP_NAME}`;
   const isTable = S.meta.tables.includes(S.view);
   $$("#tabs > button").forEach(b => b.classList.toggle("active", b.dataset.view === S.view || (isTable && b.dataset.view === "case")));
   $$("#table-tabs > button").forEach(b => b.classList.toggle("active", b.dataset.view === S.view));
@@ -2540,7 +2543,7 @@ async function fetchBounds(name, box, res, want) {
     Object.assign(b, { g, box, res, origin: [ox, oy] });
     scheduleRender();
   } catch (err) {
-    if (err.name !== "AbortError") console.warn(`ppedit: ${name} boundaries unavailable: ${err.message}`);
+    if (err.name !== "AbortError") console.warn(`${APP_NAME}: ${name} boundaries unavailable: ${err.message}`);
   }
 }
 
@@ -3352,7 +3355,7 @@ function renderClaude() {
   const ready = c.available || agentHasKey();
   $("[data-action=claude-new]").disabled = !ready;
   $("#claude-hint").textContent = ready ? "Each change Claude makes is one undoable edit."
-    : "No Anthropic API key: give one in Settings ▸ Agents, or set ANTHROPIC_API_KEY or put the key in ~/.anthropic and restart ppedit.";
+    : `No Anthropic API key: give one in Settings ▸ Agents, or set ANTHROPIC_API_KEY or put the key in ~/.anthropic and restart the ${APP_NAME} server.`;
   const box = $("#claude-sessions");
   const ids = new Set(c.sessions.map(s => s.id));
   if (!ids.has(claudeTab)) claudeTab = c.sessions.length ? c.sessions[c.sessions.length - 1].id : null;
@@ -3607,14 +3610,14 @@ async function showFolder(path) {
 }
 
 async function exitServer() {
-  if (conn.down) return closeWindow("ppedit server stopped");  // nothing to stop (#51)
+  if (conn.down) return closeWindow(`${APP_NAME} server stopped`);  // nothing to stop (#51)
   const msg = S.state.dirty
-    ? "The case has unsaved changes that will be lost.\n\nStop the ppedit server anyway?"
-    : "Stop the ppedit server? The editor will stop working until you run ppedit serve again.";
+    ? `The case has unsaved changes that will be lost.\n\nStop the ${APP_NAME} server anyway?`
+    : `Stop the ${APP_NAME} server? The editor will stop working until you run ppedit serve again.`;
   if (!confirm(msg)) return;
   try { await api("/api/exit", {}); }
   catch (err) { if (!err.network) return toast(err.message, true); }  // no response: already stopped (#51)
-  closeWindow("ppedit server stopped");
+  closeWindow(`${APP_NAME} server stopped`);
 }
 
 // Leave the page: stop watching the server, close the tab, and show `title`
@@ -3629,7 +3632,7 @@ function closeWindow(title) {
   document.body.replaceChildren(h("div", { class: "stopped" },
     h("h1", {}, title),
     h("p", {}, "You can close this tab. Run ppedit serve to start the editor again.")));
-  document.title = "ppedit (stopped)";
+  document.title = `${APP_NAME} (stopped)`;
   window.close(); // browsers allow this only for some tabs (e.g. no back history); otherwise the page above stays
 }
 
@@ -3669,7 +3672,7 @@ function serverDown() {
   if (conn.down || S.exited || !S.meta) return;
   conn.down = true;
   conn.since = Date.now();
-  document.title = "ppedit (not responding)";
+  document.title = `${APP_NAME} (not responding)`;
   showServerDialog();
   let busy = false;
   conn.poll = setInterval(async () => {  // wait for the server to come back
@@ -3697,9 +3700,9 @@ function serverBack(p) {
     return;
   }
   conn.down = false;
-  document.title = S.state ? `${S.state.dirty ? "• " : ""}${S.state.case.name} — ppedit` : "ppedit";
+  document.title = S.state ? `${S.state.dirty ? "• " : ""}${S.state.case.name} — ${APP_NAME}` : APP_NAME;
   api("/api/state", undefined, { background: true }).then(setState).catch(() => {});
-  toast("Connected to the ppedit server again");
+  toast(`Connected to the ${APP_NAME} server again`);
 }
 
 // The command that starts the server again for this page: same file, port and
@@ -3716,16 +3719,16 @@ function serverCommand() {
 }
 
 const waitingText = () => conn.forbidden
-  ? `A ppedit server answers at ${location.host} but refuses this page's session token: it was started with another token. Open the URL it printed, or stop it and run the restart command.`
+  ? `A ${APP_NAME} server answers at ${location.host} but refuses this page's session token: it was started with another token. Open the URL it printed, or stop it and run the restart command.`
   : `Waiting for the server to answer… (${Math.round((Date.now() - conn.since) / 1000)} s)`;
-const exitButton = () => h("button", { onclick: () => closeWindow("ppedit server not responding") }, "Exit browser window");
+const exitButton = () => h("button", { onclick: () => closeWindow(`${APP_NAME} server not responding`) }, "Exit browser window");
 
 function showServerDialog() {
   const d = $("#server-down");
   const dirty = S.state && S.state.dirty;
   d.replaceChildren(...[
-    h("h2", { id: "server-down-title" }, "ppedit server not responding"),
-    h("p", {}, `This page cannot reach the ppedit server at ${location.host}. The server may have stopped (Ctrl-C, Exit, a closed terminal, or an error), or it may be too busy to answer. The editor continues when it answers again.`),
+    h("h2", { id: "server-down-title" }, `${APP_NAME} server not responding`),
+    h("p", {}, `This page cannot reach the ${APP_NAME} server at ${location.host}. The server may have stopped (Ctrl-C, Exit, a closed terminal, or an error), or it may be too busy to answer. The editor continues when it answers again.`),
     dirty ? h("p", { class: "warn" }, "The case has unsaved changes. The server holds them: if it stopped, they are lost.") : null,
     h("p", { class: "status" }, waitingText()),
     h("div", { class: "actions" },
@@ -3742,7 +3745,7 @@ function showRestart() {
     navigator.clipboard.writeText(cmd).then(() => { copy.textContent = "Copied"; }, () => toast("Copy the command by hand", true));
   } }, "Copy");
   d.replaceChildren(
-    h("h2", { id: "server-down-title" }, "Restart the ppedit server"),
+    h("h2", { id: "server-down-title" }, `Restart the ${APP_NAME} server`),
     h("p", {}, "A web page cannot start programs on your computer, so run this command in a terminal on the server machine:"),
     h("div", { class: "command" }, h("code", {}, cmd), navigator.clipboard ? copy : null),
     h("p", {}, "No new browser window opens: this page reconnects as soon as the server answers, and reloads the case the new server opens."),
@@ -3803,7 +3806,8 @@ function showAbout() {
   const paras = (a.funding || "").split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
   const close = h("button", { onclick: () => d.close() }, "Close");
   d.replaceChildren(
-    h("h2", { id: "about-title" }, a.name || "ppedit", h("span", { class: "ver" }, a.version || S.meta.version || "")),
+    h("h2", { id: "about-title" }, APP_NAME, h("span", { class: "ver" }, a.version || S.meta.version || "")),
+    APP_NAME !== (a.name || "ppedit") ? h("p", { class: "summary" }, `Based on ${a.name || "ppedit"}.`) : null,
     a.summary ? h("p", { class: "summary" }, a.summary) : null,
     h("dl", {},
       row("Copyright", (a.copyright && a.copyright.length) ? a.copyright.join("\n") : "—"),
@@ -3928,7 +3932,7 @@ async function init() {
   try {
     if (sessionStorage.getItem("ppedit.restarted")) {
       sessionStorage.removeItem("ppedit.restarted");
-      setTimeout(() => toast("The ppedit server was restarted: unsaved changes made before it stopped were lost", true), 500);
+      setTimeout(() => toast(`The ${APP_NAME} server was restarted: unsaved changes made before it stopped were lost`, true), 500);
     }
   } catch (_) { /* no storage */ }
   S.state = await api("/api/state");
