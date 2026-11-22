@@ -7,6 +7,56 @@ updated with the `wecc240_*.csv` files from NLR and represents the system as of 
 
 The GLM and JSON files currently represent the WECC system using the same model as the PY file (2018 system) but will eventually represent the 2020 system from NLR when it becomes available.
 
+## Data flow
+
+Files are drawn as cylinders and the scripts and ppedit steps that write
+them as boxes; an arrow goes from each input to the step that reads it and
+from each step to the file it writes. All files except the NREL scheduling
+workbook are in this folder.
+
+```mermaid
+flowchart LR
+    subgraph nrel[NREL / NLR inputs]
+        raw[(wecc240_case.raw<br>PSS/E rev 34)]
+        xlsx[(WECC240_2018_Generation_scheduling.xlsx<br>eudoxys/wecc240)]
+        bus[(wecc240_bus.csv)]
+        geo[(wecc240_geodata.csv)]
+    end
+
+    raw --> convert[ppedit convert]
+    convert --> case[(wecc240_case.py<br>DC lines as loads)]
+
+    case --> addgeo[ppedit --geodata]
+    geo --> addgeo
+    addgeo --> map[(wecc240_map.py)]
+    map --> save[ppedit save]
+    save --> mapglm[(wecc240_map.glm)]
+    save --> mapjson[(wecc240_map.json)]
+
+    case --> dclines[ppedit edit<br>geodata, HVDC loads to dcline rows]
+    geo --> dclines
+    dclines --> c2011[(wecc240_2011.py)]
+
+    xlsx --> gentypes[wecc240_gentypes.py]
+    gentypes --> types[(wecc240_gentypes.csv)]
+    types -->|c2,c1,c0 by type| cost[(wecc240_cost.csv)]
+
+    c2011 --> build[build_wecc240_2018.py<br>costs, rateA, Vg, reactors, 80% margin]
+    types --> build
+    cost -->|generator types| build
+    bus -->|bus names| build
+    build --> c2018[(wecc240_2018.py)]
+
+    ba[(wecc240_ba.csv<br>EIA-930 BA by bus)] --> areas[wecc240_areas.py]
+    c2020[(wecc240_2020.py)] --> areas
+    areas -->|in place| c2020
+```
+
+`wecc240_2018.py` and `wecc240_2020.py` (areas, area names and the geodata
+`BA` column) are rebuilt by their scripts, so edit the inputs and rerun the
+script rather than editing these case files. The `ppedit` steps are
+conversions done once with the editor; there is no script for them.
+
 `wecc240_gentypes.csv` gives PYPOWER polynomial costs (`c2*P^2 + c1*P +
 c0`, $/h with `P` in MW) for each generator type, the PSS/E generator ID
 in `wecc240_case.raw` (`C` coal steam, `E` steam, `G` gas, `H` hydro, `S`

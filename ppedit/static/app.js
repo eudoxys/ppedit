@@ -1439,17 +1439,18 @@ function setAreas(on) {
 function busSummary() {
   // per-bus generation, load, voltage and connectivity for labels and shapes
   const c = S.state.case, res = S.state.result && S.state.result.success ? S.state.result : null;
-  const gen = new Map(), ngen = new Map(), conn = new Set();
+  const gen = new Map(), genQ = new Map(), ngen = new Map(), conn = new Set();
   c.tables.gen.forEach((g, i) => {
     ngen.set(g[0], (ngen.get(g[0]) || 0) + 1);
     if (g[7] !== 1) return;
-    const pg = res && res.gen[i] ? res.gen[i].Pg : g[1];
+    const pg = res && res.gen[i] ? res.gen[i].Pg : g[1], qg = res && res.gen[i] ? res.gen[i].Qg : g[2];
     gen.set(g[0], (gen.get(g[0]) || 0) + pg);
+    genQ.set(g[0], (genQ.get(g[0]) || 0) + qg);
   });
   c.tables.branch.forEach(b => { if (b[10] === 1 && b[0] !== b[1]) { conn.add(b[0]); conn.add(b[1]); } });
   const volt = new Map(c.tables.bus.map(b => [b[0], { Vm: b[7], Va: b[8] }]));
   if (res) res.bus.forEach(b => volt.set(b.bus_i, { Vm: b.Vm, Va: b.Va }));
-  return { gen, ngen, conn, volt, res };
+  return { gen, genQ, ngen, conn, volt, res };
 }
 
 // ---------------------------------------------------------------- diagram labels
@@ -1500,6 +1501,164 @@ function dataLabels(table, row) {
     if (showLabel(table, spec.name)) out.push(`${spec.name} ${labelValue(spec, row[j])}`);
   });
   return out;
+}
+
+// ---- diagram popups (issue #139)
+//
+// Hovering a bus or branch shows a popup (#net-tip) that follows the pointer and lists
+// only the items picked in the Labels menu for the current style, with the decimal places
+// of the Settings tab (fmtCell). It still shows values whose diagram labels were hidden
+// because they overlapped (hideOverlaps). Other diagram elements (DC lines, switches,
+// one-line generator and load symbols) use the same popup for their own text.
+
+// value with the Settings precision of a precision key ("MW", "puV", ...)
+function fmtKey(v, key) {
+  const p = S.precision[key];
+  if (typeof v !== "number" || p === null || p === undefined) return String(v);
+  return Math.abs(v) <= 1e-12 ? "0" : v.toFixed(p);
+}
+const fmtMW = v => `${fmtKey(v, "MW")} MW`, fmtMVAr = v => `${fmtKey(v, "MVAr")} MVAr`;
+
+function tipValue(spec, v) {
+  if (spec.kind === "enum") return spec.options[v] ?? v;
+  const s = fmtCell(v, spec);
+  return spec.unit ? `${s} ${spec.unit}` : s;
+}
+
+function tipData(table, row) {
+  // "name value unit" lines for the table columns picked in the Labels menu
+  const out = [];
+  S.meta.columns[table].forEach((spec, j) => {
+    if (table === "bus" && j === 0) return;
+    if (showLabel(table, spec.name)) out.push(`${spec.name} ${tipValue(spec, row[j])}`);
+  });
+  return out;
+}
+
+function busTip(b, sum, extra = "") {
+  const v = sum.volt.get(b[0]), lines = [`bus ${b[0]}${extra}`];
+  if (showLabel("bus", ":voltage"))
+    lines.push(`Vm ${fmtKey(v.Vm, "puV")} pu, Va ${fmtKey(v.Va, "deg")}°${sum.res ? "" : " (case values)"}`);
+  if (sum.ngen.get(b[0]) > 0 && showLabel("bus", ":gen"))
+    lines.push(`generation ${fmtMW(sum.gen.get(b[0]) || 0)}, ${fmtMVAr(sum.genQ.get(b[0]) || 0)}`);
+  if ((b[2] !== 0 || b[3] !== 0) && showLabel("bus", ":load")) lines.push(`load ${fmtMW(b[2])}, ${fmtMVAr(b[3])}`);
+  return lines.concat(tipData("bus", b)).join("\n");
+}
+
+function branchTip(i, rb, extra = "") {
+  const b = S.state.case.tables.branch[i], lines = [`branch ${i + 1}: ${b[0]} → ${b[1]}${extra}`];
+  if (rb && showLabel("branch", ":flow")) lines.push(`PF ${fmtMW(rb.PF)}, QF ${fmtMVAr(rb.QF)}`);
+  if (rb && showLabel("branch", ":loading"))
+    lines.push(`loading ${rb.loading_pct === null ? "unrated" : fmt(rb.loading_pct, 1) + "%"}`);
+  return lines.concat(tipData("branch", b)).join("\n");
+}
+
+function dclineTip(i, rd, caseValue = false) {
+  const d = S.state.case.tables.dcline[i], lines = [`DC line ${i + 1}: ${d[0]} → ${d[1]}${d[2] === 1 ? "" : " OUT"}`];
+  if (rd) lines.push(`Pf ${fmtMW(rd.Pf)}, Pt ${fmtMW(rd.Pt)}, loss ${fmtMW(rd.loss_MW)}`);
+  else if (caseValue) lines.push(`Pf ${fmtMW(d[3])} (case value)`);
+  return lines.join("\n");
+}
+
+// a bus label block: the bus number (always drawn) and the data lines below it (hidden
+// when they overlap); rows are [text, tspan class], the number first with class "num"
+function busLabelText(rows, x, y, dy, cls = "") {
+  const out = [];
+  const block = (part, kind, first) => {
+    const t = sv("text", { x, y, class: `${cls} ${kind}`.trim() });
+    part.forEach(([s, c], j) => {
+      const ts = sv("tspan", { x, dy: j || first ? dy : 0 });
+      if (c) ts.setAttribute("class", c);
+      ts.textContent = s;
+      t.append(ts);
+    });
+    out.push(t);
+  };
+  const head = rows.length && rows[0][1] === "num" ? rows.slice(0, 1) : [];
+  if (head.length) block(head, "dl-fixed", false);
+  if (rows.length > head.length) block(rows.slice(head.length), "dl", head.length > 0);
+  return out;
+}
+
+function setTip(el, text) { el.setAttribute("data-tip", text); return el; }
+
+function setupNetTip() {
+  const svg = $("#net"), tipEl = $("#net-tip");
+  const hide = () => { tipEl.hidden = true; };
+  svg.addEventListener("pointermove", e => {
+    const el = e.buttons ? null : e.target.closest && e.target.closest("[data-tip]");
+    if (!el || !svg.contains(el)) return hide();
+    tipEl.textContent = el.getAttribute("data-tip");
+    tipEl.hidden = false;
+    const box = svg.parentElement.getBoundingClientRect();
+    let left = e.clientX - box.left + 14, top = e.clientY - box.top + 16;
+    if (left + tipEl.offsetWidth > box.width - 4) left = e.clientX - box.left - tipEl.offsetWidth - 10;
+    if (top + tipEl.offsetHeight > box.height - 4) top = e.clientY - box.top - tipEl.offsetHeight - 10;
+    tipEl.style.left = `${Math.max(4, left)}px`;
+    tipEl.style.top = `${Math.max(4, top)}px`;
+  });
+  for (const ev of ["pointerleave", "pointerdown", "wheel"]) svg.addEventListener(ev, hide, { passive: true });
+}
+
+// ---- overlapping labels (issue #139)
+//
+// Data labels (class "dl": voltages, generation, load, flows, loading and table columns)
+// that overlap another label or a bus symbol are not drawn; the popup still shows them.
+// Bus numbers and names (class "dl-fixed") and bus symbols ("dl-body") are always drawn
+// and count as obstacles. Boxes are the rotated text boxes in screen pixels, inset by
+// OVERLAP_INSET so stacked lines that only touch do not count.
+const OVERLAP_INSET = 1;
+
+function hideOverlaps(svg) {
+  const items = [];
+  for (const el of svg.querySelectorAll(".dl, .dl-fixed, .dl-body")) {
+    let bb, m;
+    try { bb = el.getBBox(); m = el.getCTM(); } catch (_) { continue; }
+    if (!m || !bb.width || !bb.height) continue;
+    const d = OVERLAP_INSET / Math.max(1e-9, Math.hypot(m.a, m.b)); // inset in local units
+    const x0 = bb.x + d, y0 = bb.y + d, x1 = bb.x + bb.width - d, y1 = bb.y + bb.height - d;
+    if (x1 <= x0 || y1 <= y0) continue;
+    const P = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(([px, py]) => [m.a * px + m.c * py + m.e, m.b * px + m.d * py + m.f]);
+    const xs = P.map(p => p[0]), ys = P.map(p => p[1]);
+    items.push({ el, P, hide: el.classList.contains("dl"), owner: el.closest("[data-owner]"),
+      x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) });
+  }
+  // separating-axis test of two convex quadrilaterals
+  const apart = (A, B) => {
+    for (const Q of [A, B]) for (let k = 0; k < 4; k++) {
+      const [ax, ay] = Q[k], [bx, by] = Q[(k + 1) % 4], nx = ay - by, ny = bx - ax;
+      let amin = Infinity, amax = -Infinity, bmin = Infinity, bmax = -Infinity;
+      for (const [px, py] of A) { const t = px * nx + py * ny; amin = Math.min(amin, t); amax = Math.max(amax, t); }
+      for (const [px, py] of B) { const t = px * nx + py * ny; bmin = Math.min(bmin, t); bmax = Math.max(bmax, t); }
+      if (amax <= bmin || bmax <= amin) return true;
+    }
+    return false;
+  };
+  // broad phase on a grid of screen cells
+  const CELL = 64, grid = new Map(), off = new Set();
+  items.forEach((it, n) => {
+    for (let gx = Math.floor(it.x0 / CELL); gx <= Math.floor(it.x1 / CELL); gx++)
+      for (let gy = Math.floor(it.y0 / CELL); gy <= Math.floor(it.y1 / CELL); gy++) {
+        const key = `${gx},${gy}`;
+        if (!grid.has(key)) grid.set(key, []);
+        grid.get(key).push(n);
+      }
+  });
+  const seen = new Set();
+  for (const cell of grid.values()) for (let u = 0; u < cell.length; u++) for (let w = u + 1; w < cell.length; w++) {
+    const a = items[cell[u]], b = items[cell[w]];
+    if (!a.hide && !b.hide) continue;
+    // a bus's own symbol does not hide its labels (they are placed beside it)
+    if (a.owner && a.owner === b.owner && (a.el.classList.contains("dl-body") || b.el.classList.contains("dl-body"))) continue;
+    const key = cell[u] < cell[w] ? `${cell[u]}:${cell[w]}` : `${cell[w]}:${cell[u]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (a.x1 <= b.x0 || b.x1 <= a.x0 || a.y1 <= b.y0 || b.y1 <= a.y0 || apart(a.P, b.P)) continue;
+    if (a.hide) off.add(a.el);
+    if (b.hide) off.add(b.el);
+  }
+  for (const el of off) el.setAttribute("display", "none");
+  return off.size;
 }
 
 function branchLabels(i, rb) {
@@ -1609,7 +1768,7 @@ function renderNetwork() {
     if (ang > 90) ang -= 180; else if (ang < -90) ang += 180;
     const nx = -uy, ny = ux, off = 7;
     const lx = ax + nx * off * (ny < 0 ? -1 : 1), ly = ay + ny * off * (ny < 0 ? -1 : 1);
-    const txt = sv("text", { x: lx, y: ly, class: "flow-label", "text-anchor": "middle", "dominant-baseline": "middle", transform: `rotate(${ang} ${lx} ${ly})` });
+    const txt = sv("text", { x: lx, y: ly, class: "flow-label dl", "text-anchor": "middle", "dominant-baseline": "middle", transform: `rotate(${ang} ${lx} ${ly})` });
     txt.textContent = `${Math.abs(mw).toFixed(1)} MW`;
     if (showLabel("branch", ":flow")) labels.append(txt);
   };
@@ -1619,7 +1778,7 @@ function renderNetwork() {
     const dx = q.x - p.x, dy = q.y - p.y, len = Math.hypot(dx, dy) || 1;
     const nx = -dy / len, ny = dx / len, s = ny < 0 ? 1 : -1, off = classic ? 9 : 6;
     const lx = (p.x + q.x) / 2 + nx * off * s, ly = (p.y + q.y) / 2 + ny * off * s;
-    const txt = sv("text", { x: lx, y: ly, class: "line-label", "text-anchor": Math.abs(nx) < 0.3 ? "middle" : nx * s > 0 ? "start" : "end" });
+    const txt = sv("text", { x: lx, y: ly, class: "line-label dl", "text-anchor": Math.abs(nx) < 0.3 ? "middle" : nx * s > 0 ? "start" : "end" });
     const y0 = ny * s < -0.3 ? -(lines.length - 1) * 1.1 : Math.abs(ny) <= 0.3 ? -(lines.length - 1) * 0.55 : 0.8;
     lines.forEach((t, j) => {
       const ts = sv("tspan", { x: lx, dy: `${j ? 1.1 : y0 + 0.35}em` });
@@ -1651,10 +1810,8 @@ function renderNetwork() {
     } else if (classic && b[10] === 1 && !cls.includes("sel")) {
       line.style.strokeWidth = 2;
     }
-    const hit = sv("line", { x1: p.x, y1: p.y, x2: q.x, y2: q.y, class: "edge-hit" });
-    const title = sv("title");
-    title.textContent = `branch ${i + 1}: ${b[0]} → ${b[1]}` + (rb ? `\nPF ${fmt(rb.PF, 1)} MW, QF ${fmt(rb.QF, 1)} MVAr, loading ${rb.loading_pct === null ? "unrated" : fmt(rb.loading_pct, 0) + "%"}` : "");
-    hit.append(title);
+    const hit = setTip(sv("line", { x1: p.x, y1: p.y, x2: q.x, y2: q.y, class: "edge-hit" }),
+      branchTip(i, rb, `${xfmr ? " (transformer)" : ""}${b[10] === 0 ? " OUT" : ""}`));
     hit.addEventListener("pointerdown", e => e.stopPropagation()); // else #net captures the pointer and gets the click
     hit.addEventListener("click", e => { e.stopPropagation(); pick("branch", i); });
     g.append(line, hit);
@@ -1688,11 +1845,7 @@ function renderNetwork() {
       labels.append(tx);
     }
     if (rd && classic) flowMark(p, q, rd.Pf, DC_COLOR);
-    const hit = sv("line", { x1: p.x, y1: p.y, x2: q.x, y2: q.y, class: "edge-hit" });
-    const title = sv("title");
-    title.textContent = `DC line ${i + 1}: ${d[0]} → ${d[1]}${on ? "" : " OUT"}` +
-      (rd ? `\nPf ${fmt(rd.Pf, 1)} MW, Pt ${fmt(rd.Pt, 1)} MW, loss ${fmt(rd.loss_MW, 2)} MW` : `\nPf ${fmt(d[3], 1)} MW (case value)`);
-    hit.append(title);
+    const hit = setTip(sv("line", { x1: p.x, y1: p.y, x2: q.x, y2: q.y, class: "edge-hit" }), dclineTip(i, rd, true));
     hit.addEventListener("pointerdown", e => e.stopPropagation()); // else #net captures the pointer and gets the click
     hit.addEventListener("click", e => { e.stopPropagation(); pick("dcline", i); });
     g.append(hit);
@@ -1706,7 +1859,7 @@ function renderNetwork() {
     if (S.pick && S.pick.kind === "bus" && S.pick.index === i) cls.push("sel");
     if (errBus.has(i)) cls.push("err");
     if (G && G.estimated.has(b[0])) cls.push("nogeo");
-    const node = sv("g", { class: cls.join(" "), transform: `translate(${p.x},${p.y})`, "data-bus": b[0] });
+    const node = sv("g", { class: cls.join(" "), transform: `translate(${p.x},${p.y})`, "data-bus": b[0], "data-owner": b[0] });
     const v = sum.volt.get(b[0]);
     const hasGen = sum.ngen.get(b[0]) > 0, hasLoad = b[2] !== 0 || b[3] !== 0;
     if (areas) {
@@ -1722,9 +1875,9 @@ function renderNetwork() {
       if (isolated) cls.push("isolated");
       const fill = isolated ? "none" : vColor(v.Vm);
       let shape;
-      if (hasGen) { r = 8; shape = sv("circle", { r, class: "body", fill }); }
-      else if (hasLoad) { r = 9; shape = sv("path", { d: `M0,${-r} L${r * 0.95},${r * 0.7} L${-r * 0.95},${r * 0.7} Z`, class: "body", fill }); }
-      else { r = 6.5; shape = sv("rect", { x: -r, y: -r, width: 2 * r, height: 2 * r, class: "body", fill }); }
+      if (hasGen) { r = 8; shape = sv("circle", { r, class: "body dl-body", fill }); }
+      else if (hasLoad) { r = 9; shape = sv("path", { d: `M0,${-r} L${r * 0.95},${r * 0.7} L${-r * 0.95},${r * 0.7} Z`, class: "body dl-body", fill }); }
+      else { r = 6.5; shape = sv("rect", { x: -r, y: -r, width: 2 * r, height: 2 * r, class: "body dl-body", fill }); }
       node.setAttribute("class", cls.join(" "));
       node.append(shape);
       if (b[1] === 3) node.append(sv("circle", { r: r + 4, class: "ref-ring" }));
@@ -1734,35 +1887,20 @@ function renderNetwork() {
       if (hasGen && showLabel("bus", ":gen")) lines.push([`G ${(sum.gen.get(b[0]) || 0).toFixed(1)} MW`, "gen-mw"]);
       if (b[2] !== 0 && showLabel("bus", ":load")) lines.push([`L ${b[2].toFixed(1)} MW`, "load-mw"]);
       for (const t of dataLabels("bus", b)) lines.push([t, "data"]);
-      const label = sv("text", { x: r + 5, y: -r + 2, class: "ol-label" });
-      lines.forEach(([t, c2], j) => {
-        const ts = sv("tspan", { x: r + 5, dy: j ? "1.15em" : 0, class: c2 });
-        ts.textContent = t;
-        label.append(ts);
-      });
-      if (lines.length) node.append(label);
+      node.append(...busLabelText(lines, r + 5, -r + 2, "1.15em", "ol-label"));
     } else {
       r = b[1] === 3 ? 9 : 7;
       if (hasGen) node.append(sv("circle", { r: r + 4, class: "gen" }));
-      node.append(sv("circle", { r, class: "body", fill: sum.res ? vColor(v.Vm) : TYPE_COLOR[b[1]] || "#999" }));
+      node.append(sv("circle", { r, class: "body dl-body", fill: sum.res ? vColor(v.Vm) : TYPE_COLOR[b[1]] || "#999" }));
       if (b[2] > 0) node.append(sv("path", { d: `M${r + 2},${r + 1} l6,6 m-3,0 h3 v-3`, class: "load" }));
-      const lines = [...(showLabel("bus", "bus_i") ? [`${b[0]}`] : [])];
-      if (showLabel("bus", ":voltage")) lines.push(`${v.Vm.toFixed(3)}∠${v.Va.toFixed(1)}°`);
-      if (hasGen && showLabel("bus", ":gen")) lines.push(`G ${(sum.gen.get(b[0]) || 0).toFixed(1)} MW`);
-      if (b[2] !== 0 && showLabel("bus", ":load")) lines.push(`L ${b[2].toFixed(1)} MW`);
-      lines.push(...dataLabels("bus", b));
-      const label = sv("text", { x: r + 5, y: -r - 1 });
-      lines.forEach((t, j) => {
-        const ts = sv("tspan", { x: r + 5, dy: j ? "1.15em" : 0 });
-        if (j || !showLabel("bus", "bus_i")) ts.setAttribute("class", "data");
-        ts.textContent = t;
-        label.append(ts);
-      });
-      if (lines.length) node.append(label);
+      const lines = showLabel("bus", "bus_i") ? [[`${b[0]}`, "num"]] : [];
+      if (showLabel("bus", ":voltage")) lines.push([`${v.Vm.toFixed(3)}∠${v.Va.toFixed(1)}°`, "data"]);
+      if (hasGen && showLabel("bus", ":gen")) lines.push([`G ${(sum.gen.get(b[0]) || 0).toFixed(1)} MW`, "data"]);
+      if (b[2] !== 0 && showLabel("bus", ":load")) lines.push([`L ${b[2].toFixed(1)} MW`, "data"]);
+      for (const t of dataLabels("bus", b)) lines.push([t, "data"]);
+      node.append(...busLabelText(lines, r + 5, -r - 1, "1.15em"));
     }
-    const title = sv("title");
-    title.textContent = `bus ${b[0]} (${S.meta.columns.bus[1].options[b[1]]}), ${areaText(b[6])}${priceRef.has(b[0]) ? " (price reference bus)" : ""}\nPd ${b[2]} MW, Qd ${b[3]} MVAr\nVm ${fmt(v.Vm, 4)} pu, Va ${fmt(v.Va, 2)}°${sum.res ? " (solution)" : " (case values)"}`;
-    node.append(title);
+    setTip(node, busTip(b, sum, priceRef.has(b[0]) ? " (price reference bus)" : ""));
     node.addEventListener("pointerdown", e => startDrag(e, b[0], i));
     g.append(node);
   });
@@ -1787,6 +1925,7 @@ function renderNetwork() {
   }
   svg.classList.remove("oneline");
   svg.replaceChildren(...(geo ? [renderMap(svg.clientWidth, svg.clientHeight)] : []), g);
+  hideOverlaps(svg);
   renderLegend(!!res, classic);
   areaLegend();
   if (G && (G.estimated.size || G.missing)) {
@@ -2027,7 +2166,7 @@ function renderOneline() {
   const errBus = new Set(S.state.issues.filter(i => i.table === "bus" && i.level === "error" && i.row !== null).map(i => i.row));
   const busIndex = new Map(T.bus.map((b, i) => [b[0], i]));
   const num = v => (Math.abs(v) < 0.05 ? 0 : v).toFixed(1);
-  const tip = (el, s) => { const t = sv("title"); t.textContent = s; el.append(t); return el; };
+  const tip = setTip;
   const onPick = (el, kind, index) => {
     el.addEventListener("pointerdown", e => e.stopPropagation());
     el.addEventListener("click", e => { e.stopPropagation(); pick(kind, index); });
@@ -2044,9 +2183,9 @@ function renderOneline() {
   // MW to the left and MVAr to the right of a vertical line, centered at yc, reading upward
   const flowLabels = (xx, yc, p, q) => {
     if (!showText) return;
-    const a = sv("text", { x: xx - 4, y: yc, class: "ol-flow", "text-anchor": "middle", transform: `rotate(-90 ${xx - 4} ${yc})` });
+    const a = sv("text", { x: xx - 4, y: yc, class: "ol-flow dl", "text-anchor": "middle", transform: `rotate(-90 ${xx - 4} ${yc})` });
     a.textContent = `${num(p)} MW`;
-    const b = sv("text", { x: xx + 4, y: yc, class: "ol-flow q", "text-anchor": "middle", "dominant-baseline": "hanging", transform: `rotate(-90 ${xx + 4} ${yc})` });
+    const b = sv("text", { x: xx + 4, y: yc, class: "ol-flow q dl", "text-anchor": "middle", "dominant-baseline": "hanging", transform: `rotate(-90 ${xx + 4} ${yc})` });
     b.textContent = `${num(q)} MVAr`;
     text.append(a, b);
   };
@@ -2055,7 +2194,7 @@ function renderOneline() {
     if (!showText) return;
     rows.forEach((s, j) => {
       const xl = xx + 15 + 10 * j;
-      const t = sv("text", { x: xl, y: yc, class: "ol-flow ol-data", "text-anchor": "middle", "dominant-baseline": "hanging", transform: `rotate(-90 ${xl} ${yc})` });
+      const t = sv("text", { x: xl, y: yc, class: "ol-flow ol-data dl", "text-anchor": "middle", "dominant-baseline": "hanging", transform: `rotate(-90 ${xl} ${yc})` });
       t.textContent = s;
       text.append(t);
     });
@@ -2094,11 +2233,12 @@ function renderOneline() {
     const sym = onPick(sv("g", { class: "ol-gen" + (on ? "" : " dead") + (sel ? " sel" : "") }), "gen", i);
     sym.append(sv("circle", { cx: xx, cy: gc, r: 12 }),
       sv("path", { d: `M${xx - 7},${gc} c2,-6 5,-6 7,0 s5,6 7,0`, class: "wave" }));
-    tip(sym, `gen ${i + 1} at bus ${gr[0]} (${on ? "in service" : "out of service"})\nPg ${num(p)} MW, Qg ${num(q)} MVAr`);
+    tip(sym, `gen ${i + 1} at bus ${gr[0]} (${on ? "in service" : "out of service"})` +
+      (showLabel("bus", ":gen") ? `\nPg ${fmtMW(p)}, Qg ${fmtMVAr(q)}` : ""));
     wires.append(sym);
     if (showLabel("bus", ":gen")) flowLabels(xx, yb - 58, p, q);
     if (showText) {
-      const t = sv("text", { x: xx, y: gc - 16, class: "ol-name", "text-anchor": "middle" });
+      const t = sv("text", { x: xx, y: gc - 16, class: "ol-name dl-fixed", "text-anchor": "middle" });
       t.textContent = `G${i + 1}`;
       text.append(t);
     }
@@ -2116,7 +2256,8 @@ function renderOneline() {
       was ? `load at bus ${b[0]} switched off: click to restore Pd ${num(was[0])} MW, Qd ${num(was[1])} MVAr`
         : `load at bus ${b[0]}: click to switch it off (Pd and Qd to 0)`);
     const sym = onPick(sv("path", { d: `M${xx - 7},${ya} L${xx + 7},${ya} L${xx},${ya + 13} Z`, class: "ol-load" + (on ? "" : " dead") }), "bus", i);
-    tip(sym, `load at bus ${b[0]}${was ? " (switched off)" : b[1] === 4 ? " (bus NONE: disconnected)" : ""}\nPd ${num(p)} MW, Qd ${num(q)} MVAr`);
+    tip(sym, `load at bus ${b[0]}${was ? " (switched off)" : b[1] === 4 ? " (bus NONE: disconnected)" : ""}` +
+      (showLabel("bus", ":load") ? `\nPd ${fmtMW(p)}, Qd ${fmtMVAr(q)}` : ""));
     wires.append(sym);
     if (showLabel("bus", ":load")) flowLabels(xx, yb + 57, p, q);
   });
@@ -2164,8 +2305,7 @@ function renderOneline() {
     }
     dataText(xx, yl, branchLabels(i, rb));
     const hit = onPick(sv("path", { d: R.path(ya, yb), class: "edge-hit", fill: "none" }), "branch", i);
-    tip(hit, `branch ${i + 1}: ${b[0]} → ${b[1]}${xfmr ? " (transformer)" : ""}${on ? "" : " OUT"}` +
-      (rb ? `\nPF ${fmt(rb.PF, 1)} MW, QF ${fmt(rb.QF, 1)} MVAr, loading ${rb.loading_pct === null ? "unrated" : fmt(rb.loading_pct, 0) + "%"}` : ""));
+    tip(hit, branchTip(i, rb, `${xfmr ? " (transformer)" : ""}${on ? "" : " OUT"}`));
     lines.append(hit);
     // breakers go above the line's click target, so a click on one switches the branch
     const btitle = `branch ${i + 1} breaker (${on ? "closed" : "open"}): click to switch the branch ${on ? "out of" : "into"} service`;
@@ -2201,8 +2341,7 @@ function renderOneline() {
       if (Math.abs(p) >= 0.05) arrow(xx, yl, p > 0);
     }
     const hit = onPick(sv("path", { d: R.path(ya, yb), class: "edge-hit", fill: "none" }), "dcline", i);
-    tip(hit, `DC line ${i + 1}: ${d[0]} → ${d[1]}${on ? "" : " OUT"}` +
-      (rd ? `\nPf ${fmt(rd.Pf, 1)} MW, Pt ${fmt(rd.Pt, 1)} MW, loss ${fmt(rd.loss_MW, 2)} MW` : ""));
+    tip(hit, dclineTip(i, rd));
     lines.append(hit);
   });
   // bus bars with number and voltage at the left end
@@ -2215,22 +2354,18 @@ function renderOneline() {
     if (S.pick && S.pick.kind === "bus" && S.pick.index === i) cls.push("sel");
     bars.append(sv("line", { x1: B.x0, y1: B.y, x2: B.x1, y2: B.y, class: cls.join(" ") }));
     const hit = onPick(sv("rect", { x: B.x0 - 4, y: B.y - 7, width: B.x1 - B.x0 + 8, height: 14, class: "ol-bar-hit" }), "bus", i);
-    tip(hit, `bus ${b[0]} (${S.meta.columns.bus[1].options[b[1]]}), ${areaText(b[6])}${priceRef.has(b[0]) ? " (price reference bus)" : ""}\nVm ${fmt(v.Vm, 4)} pu, Va ${fmt(v.Va, 2)}°${sum.res ? " (solution)" : " (case values)"}`);
+    tip(hit, busTip(b, sum, priceRef.has(b[0]) ? " (price reference bus)" : ""));
     bars.append(hit);
     if (showText) {
-      const t = sv("text", { x: B.x0 - 6, y: B.y - 3, class: "ol-bus", "text-anchor": "end" });
       const head = `${areas && priceRef.has(b[0]) ? "★ " : ""}${b[1] === 3 ? "REF " : ""}${showLabel("bus", "bus_i") ? b[0] : ""}`.trim();
       const rows = [];
       if (head) rows.push([head, "num"]);
       if (showLabel("bus", ":voltage")) rows.push([`${v.Vm.toFixed(3)}∠${v.Va.toFixed(1)}°`, null]);
       for (const d of dataLabels("bus", b)) rows.push([d, "data"]);
-      rows.forEach(([s, cl], j) => {
-        const ts = sv("tspan", { x: B.x0 - 6, dy: j ? "1.2em" : 0 });
-        if (cl) ts.setAttribute("class", cl);
-        ts.textContent = s;
-        t.append(ts);
-      });
-      if (rows.length) text.append(t);
+      for (const t of busLabelText(rows, B.x0 - 6, B.y - 3, "1.2em", "ol-bus")) {
+        t.setAttribute("text-anchor", "end");
+        text.append(t);
+      }
     }
   });
   g.append(wires, bars, lines, text);
@@ -2240,7 +2375,9 @@ function renderOneline() {
     for (const [a, B] of [...L.boxes].sort((p, q) => p[0] - q[0])) {
       const color = areaOutline(a);
       const r = sv("rect", { x: B.x0, y: B.y0, width: B.x1 - B.x0, height: B.y1 - B.y0, rx: 10, class: "area-box", stroke: color, fill: color });
-      tip(r, `${areaText(a)}: ${T.bus.filter(b => b[6] === a).length} bus(es)` + (refs.has(a) ? `, price reference bus ${refs.get(a)}` : " (no areas row)"));
+      const title = sv("title");
+      title.textContent = `${areaText(a)}: ${T.bus.filter(b => b[6] === a).length} bus(es)` + (refs.has(a) ? `, price reference bus ${refs.get(a)}` : " (no areas row)");
+      r.append(title);
       regions.append(r);
       const t = sv("text", { x: B.x0 + 8 / k, y: B.y0 - 6 / k, class: areaNameClass(a), fill: color, style: `font-size:${13 / k}px;stroke-width:${3 / k}px` });
       t.textContent = areaTitle(a);
@@ -2251,6 +2388,7 @@ function renderOneline() {
     g.append(names);
   }
   svg.replaceChildren(g);
+  hideOverlaps(svg);
   renderLegend(!!res, false, true);
   areaLegend();
   renderInspector();
@@ -3924,6 +4062,7 @@ async function init() {
   window.addEventListener("resize", () => { if (S.view === "network") renderNetwork(); });
   $("#claude-local").addEventListener("change", e => { $("#claude-root").disabled = !e.target.checked; });
   setupNetworkEvents();
+  setupNetTip();
   setupSearch();
   setupBusMenu();
   setInterval(pollClaude, 1000);
