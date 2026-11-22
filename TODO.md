@@ -22,7 +22,8 @@
 - [x] Claude tab: multiple Claude API sessions that edit the case, with web and local data sources
 - [x] cvxopf solve options on the Settings tab (issue #88; decision #48)
 - [x] Time series of loads and generator/DC line limits, multistep cvxopf OPF (issue #124; decision #60)
-- [ ] cvxopf device models (storage, nondispatchable units, curtailable loads) and coupling between steps (issue #88; DESIGN.md open questions)
+- [x] Storage table modeled in multistep CVXOPF OPF (issue #128; decision #62)
+- [ ] cvxopf device models (nondispatchable units, curtailable loads) and coupling between steps such as ramp limits (issue #88; DESIGN.md open questions)
 - [x] Solver errors and warnings on the Issues tab (issue #89; decision #49)
 - [x] Physical meaning and constraints of solver warnings on the Issues tab (follow-up to PR #92; decision #53)
 - [ ] Claude sessions: stream responses, persist conversations, show a diff of each session's edits

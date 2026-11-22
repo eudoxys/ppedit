@@ -240,6 +240,10 @@ comma-separated string of coefficients (polynomial, highest order first) or \
 x,y pairs (piecewise).
 - areas rows are [area, price_ref_bus, name]; bus.area holds each bus's area number
   (the key); name is an optional free-text label (e.g. a balancing authority code).
+- storage rows are discharged by generator row gen_i (counted from 1, unlike \
+row indexes) and charge at bus bus_i, or through that generator when bus_i is \
+-1; only multistep CVXOPF OPF models them (Es is the starting energy, Eend -1 \
+leaves the final energy free).
 - Infinite limits are the strings "Inf" and "-Inf".
 - Enum columns accept the code or the keyword shown in braces.
 
