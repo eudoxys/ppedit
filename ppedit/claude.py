@@ -10,9 +10,16 @@ the browser on its next refresh, and can be undone like any other edit.
 Configuration
 -------------
 
-  - API key: the `ANTHROPIC_API_KEY` environment variable, or else the
-    first line of `~/.anthropic`. Without a key the Claude tab says so and
-    no session can be started.
+  - Agent: `AGENTS` lists the agent back ends a session can use (chosen in
+    the editor's Settings tab, decision #64); only `claude` exists.
+
+  - API key: given per session as `api_key` (the key text) or `api_key_file`
+    (a file on the server machine whose first line is the key), or else the
+    server default: the `ANTHROPIC_API_KEY` environment variable, or the
+    first line of `~/.anthropic`. With no server default the Agent tab says
+    so, and a session starts only when the Settings tab gives a key. A key
+    is kept in server memory with its session and never returned in the
+    session state.
 
   - Model: chosen per session from `MODELS`; the default is
     `PPEDIT_CLAUDE_MODEL` from the environment or `DEFAULT_MODEL`.
@@ -62,6 +69,9 @@ API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2023-06-01"
 """Value of the `anthropic-version` header"""
 
+AGENTS = ["claude"]
+"""Agent back ends sessions can use (the editor's Settings tab picks one)"""
+
 MODELS = ["claude-sonnet-5-5","claude-opus-5-5","claude-haiku-5-5"]
 """Models offered in the editor (first is the default)"""
 
@@ -94,13 +104,38 @@ def api_key() -> str|None:
     except OSError:
         return None
 
-def http_client(payload:dict) -> dict:
+def read_key_file(path:str) -> str:
+    """Return the API key in the first line of a file on the server machine
+
+    Arguments
+    ---------
+
+      - `path`: file name (`~` is expanded)
+
+    Raises `CaseError` when the file cannot be read or its first line is
+    empty. The message names the file, never its contents.
+    """
+    name = os.path.expanduser(str(path or "").strip())
+    if not name:
+        raise CaseError("no API key file given")
+    try:
+        with open(name,encoding="utf-8") as fh:
+            key = fh.readline().strip()
+    except OSError as err:
+        raise CaseError(f"cannot read API key file '{path}': {err.strerror}") from err
+    if not key:
+        raise CaseError(f"API key file '{path}' is empty")
+    return key
+
+def http_client(payload:dict,key:str|None=None) -> dict:
     """Send one Messages API request and return the response
 
     Arguments
     ---------
 
       - `payload`: request body (`model`, `system`, `messages`, `tools`, ...)
+
+      - `key`: API key (default: `api_key()`)
 
     Returns
     -------
@@ -109,7 +144,7 @@ def http_client(payload:dict) -> dict:
 
     Raises `RuntimeError` with the API's error message on failure.
     """
-    key = api_key()
+    key = key or api_key()
     if not key:
         raise RuntimeError("no Anthropic API key (set ANTHROPIC_API_KEY or create ~/.anthropic)")
     req = urllib.request.Request(API_URL,data=json.dumps(payload).encode(),method="POST",
@@ -295,9 +330,12 @@ class Session:
       - `local`: enable the local files data source
 
       - `root`: local data folder
+
+      - `key`: API key for this session (default: the client's own)
     """
 
-    def __init__(self,sid,editor,client,title="",model=None,web=False,local=False,root=None):
+    def __init__(self,sid,editor,client,title="",model=None,web=False,local=False,root=None,
+            key=None):
         self.id = sid
         self.editor = editor
         self.client = client
@@ -318,6 +356,9 @@ class Session:
         """Number of tool calls that changed the case"""
         self.usage = {"input_tokens":0,"output_tokens":0}
         self.created = time.time()
+        self.agent = "claude"
+        """Agent back end (see `AGENTS`)"""
+        self._key = key or None
         self._stop = False
         self._thread = None
         self._lock = threading.Lock()
@@ -325,7 +366,7 @@ class Session:
     def summary(self) -> dict:
         """Return the session for the browser"""
         with self._lock:
-            return {"id":self.id,"title":self.title,"model":self.model,
+            return {"id":self.id,"title":self.title,"agent":self.agent,"model":self.model,
                 "web":self.web,"local":self.local,"root":self.root,
                 "status":self.status,"edits":self.edits,"usage":dict(self.usage),
                 "transcript":list(self.transcript)}
@@ -371,10 +412,11 @@ class Session:
                 if self._stop:
                     self._add(kind="error",text="stopped")
                     break
-                res = self.client({"model":self.model,"max_tokens":MAX_TOKENS,
+                payload = {"model":self.model,"max_tokens":MAX_TOKENS,
                     "system":[{"type":"text","text":_system(self.web,self.local,self.root),
                         "cache_control":{"type":"ephemeral"}}],
-                    "tools":self._tools(),"messages":self.messages})
+                    "tools":self._tools(),"messages":self.messages}
+                res = self.client(payload,key=self._key) if self._key else self.client(payload)
                 usage = res.get("usage") or {}
                 with self._lock:
                     for k in self.usage:
@@ -582,7 +624,8 @@ class Sessions:
         self.lock = threading.Lock()
 
     def available(self) -> bool:
-        """Whether sessions can reach Claude (an API key is set, or a test client)"""
+        """Whether sessions can reach Claude without a key from the Settings tab
+        (a server default key is set, or a test client)"""
         return self.client is not http_client or bool(api_key())
 
     def default_root(self) -> str:
@@ -590,16 +633,40 @@ class Sessions:
         return os.path.dirname(self.editor.path) if self.editor.path else os.getcwd()
 
     def create(self,**options) -> Session:
-        """Start a new session (see `Session` for the options)"""
-        if not self.available():
-            raise CaseError("no Anthropic API key (set ANTHROPIC_API_KEY or create ~/.anthropic)")
+        """Start a new session
+
+        Arguments
+        ---------
+
+          - `agent`: agent back end, one of `AGENTS` (default `claude`)
+
+          - `api_key`: API key text for this session
+
+          - `api_key_file`: file on the server machine whose first line is
+            the API key (used when `api_key` is not given)
+
+          - `title`, `model`, `web`, `local`, `root`: see `Session`
+
+        Without `api_key` or `api_key_file` the server default key is used
+        (see `api_key`). Raises `CaseError` for an unknown agent, an
+        unreadable key file, or when there is no key at all.
+        """
+        agent = options.get("agent") or "claude"
+        if agent not in AGENTS:
+            raise CaseError(f"unknown agent '{agent}' (available: {', '.join(AGENTS)})")
+        key = str(options.get("api_key") or "").strip() or None
+        if not key and options.get("api_key_file"):
+            key = read_key_file(options["api_key_file"])
+        if not key and not self.available():
+            raise CaseError("no Anthropic API key (set ANTHROPIC_API_KEY, create ~/.anthropic, "
+                "or give a key in the Settings tab)")
         model = options.get("model") or DEFAULT_MODEL
         if options.get("local") and not options.get("root"):
             options["root"] = self.default_root()
         with self.lock:
             sid = next(self._ids)
             session = Session(sid,self.editor,self.client,options.get("title",""),model,
-                options.get("web"),options.get("local"),options.get("root"))
+                options.get("web"),options.get("local"),options.get("root"),key)
             self.items[sid] = session
         return session
 
@@ -621,6 +688,6 @@ class Sessions:
         """Return all sessions for the browser"""
         with self.lock:
             items = list(self.items.values())
-        return {"available":self.available(),"models":MODELS,"default_model":DEFAULT_MODEL,
+        return {"available":self.available(),"agents":AGENTS,"models":MODELS,"default_model":DEFAULT_MODEL,
             "default_root":self.default_root(),"revision":self.editor.revision,
             "sessions":[s.summary() for s in items]}

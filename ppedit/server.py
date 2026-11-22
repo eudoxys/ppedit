@@ -161,8 +161,12 @@ open case was read, see `ppedit.Case.source`, or `null`), and `loads_off`
 Claude sessions (see `ppedit.claude`); each returns the editor state plus
 `claude`, the list of sessions (`ppedit.claude.Sessions.to_dict`):
 
-  - `GET  /api/claude`: the sessions only (polled by the Claude tab)
-  - `POST /api/claude/new`: `{"title"?, "model"?, "web"?, "local"?, "root"?}`
+  - `GET  /api/claude`: the sessions only (polled by the Agent tab)
+  - `POST /api/claude/new`: `{"title"?, "model"?, "web"?, "local"?, "root"?,
+    "agent"?, "api_key"?, "api_key_file"?}`; `agent` is one of
+    `ppedit.claude.AGENTS`, and `api_key` (key text) or `api_key_file` (a
+    file on the server machine whose first line is the key) override the
+    server default key for this session (see `ppedit.claude.Sessions.create`)
   - `POST /api/claude/send`: `{"id", "text"}` add a message; Claude works on
     it in the background, editing the case through undoable edits
   - `POST /api/claude/stop`: `{"id"}` stop after the current step
@@ -1061,7 +1065,9 @@ def create_app(case:Case|None=None,path:str|None=None,allow_remote:bool=False,
     def claude_new():
         data = body()
         claude.create(title=str(data.get("title") or ""),model=data.get("model"),
-            web=bool(data.get("web")),local=bool(data.get("local")),root=data.get("root") or None)
+            web=bool(data.get("web")),local=bool(data.get("local")),root=data.get("root") or None,
+            agent=data.get("agent") or None,api_key=data.get("api_key") or None,
+            api_key_file=data.get("api_key_file") or None)
         return claude_state()
 
     @app.post("/api/claude/send")

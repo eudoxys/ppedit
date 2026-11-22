@@ -109,6 +109,26 @@ function droppedText(d) {
   if (d.columns.length) parts.push(`column(s) ${d.columns.slice(0, 5).join(", ")}${d.columns.length > 5 ? ", …" : ""}`);
   return `; dropped ${parts.join(" and ")} with missing values`;
 }
+
+// Agent settings (issue #133, decision #64; Settings tab): the agent back end
+// and where new sessions get their API key: keySource "default" (the server's
+// ANTHROPIC_API_KEY or ~/.anthropic), "text" (key typed here) or "file" (a
+// file on the server machine whose first line is the key). Kept in
+// localStorage (ppedit.agent), not in the case; sent with POST /api/claude/new.
+const AGENT_DEFAULTS = { agent: "claude", keySource: "default", key: "", keyFile: "" };
+const AGENT_NAMES = { claude: "Claude (Anthropic)" };
+function loadAgent() {
+  try { return { ...AGENT_DEFAULTS, ...JSON.parse(localStorage.getItem("ppedit.agent") || "{}") }; }
+  catch (_) { return { ...AGENT_DEFAULTS }; }
+}
+S.agent = loadAgent();
+function agentOptions() {
+  const a = S.agent, out = { agent: a.agent || "claude" };
+  if (a.keySource === "text" && a.key.trim()) out.api_key = a.key.trim();
+  else if (a.keySource === "file" && a.keyFile.trim()) out.api_key_file = a.keyFile.trim();
+  return out;
+}
+function agentHasKey() { const o = agentOptions(); return !!(o.api_key || o.api_key_file); }
 // "max_iter=500, tol=1e-8, mu_strategy=adaptive" -> {max_iter: 500, tol: 1e-8, mu_strategy: "adaptive"};
 // numbers and true/false are converted, other values stay text; throws on a malformed item
 function parseSolverOptions(text) {
@@ -327,8 +347,8 @@ function renderChrome() {
   const dot = $("#result-dot");
   dot.className = "status-dot" + (st.result ? (st.result.success ? " ok" : " fail") : "");
   const busy = claudeBusy();
-  $("#claude-dot").className = "status-dot" + (busy ? " ok" : "");
-  $("#claude-dot").title = busy ? "Claude is working" : "";
+  $("#agent-dot").className = "status-dot" + (busy ? " ok" : "");
+  $("#agent-dot").title = busy ? "An agent session is working" : "";
   document.title = `${st.dirty ? "• " : ""}${c.name} — ppedit`;
   const isTable = S.meta.tables.includes(S.view);
   $$("#tabs > button").forEach(b => b.classList.toggle("active", b.dataset.view === S.view || (isTable && b.dataset.view === "case")));
@@ -340,6 +360,7 @@ function renderChrome() {
 // "tables" and "series" are former tab names, kept so ?view=tables and
 // ?view=series still work.
 function show(view) {
+  if (view === "claude") view = "agent";  // former tab name (issue #133)
   if (view === "series") view = "multistep";
   if (view === "case" || view === "tables") view = S.table;
   if (S.meta.tables.includes(view)) S.table = view;
@@ -355,7 +376,7 @@ function renderView() {
   else if (S.view === "network") { $("#view-network").classList.add("active"); renderNetwork(); }
   else if (S.view === "results") { $("#view-results").classList.add("active"); renderResults(); }
   else if (S.view === "multistep") { $("#view-series").classList.add("active"); renderSeries(); }
-  else if (S.view === "claude") { $("#view-claude").classList.add("active"); renderClaude(); }
+  else if (S.view === "agent") { $("#view-agent").classList.add("active"); renderClaude(); }
   else if (S.view === "settings") { $("#view-settings").classList.add("active"); renderSettings(); }
   else { $("#view-issues").classList.add("active"); renderIssues(); }
 }
@@ -386,6 +407,36 @@ function renderSettings() {
       + "“Any missing value” drops a row or column with at least one empty or NaN cell; “empty” drops only those with no value at all. "
       + "In series files the time column is never dropped and a missing time does not count."));
   renderCvxopfSettings();
+  renderAgentSettings();
+}
+
+// Agents group (issue #133): agent back end and API key source for new sessions
+function renderAgentSettings() {
+  const a = S.agent;
+  const save = () => { try { localStorage.setItem("ppedit.agent", JSON.stringify(S.agent)); } catch (_) { /* storage unavailable */ } };
+  const set = (key, value) => { a[key] = value; save(); renderAgentSettings(); };
+  const agents = (S.claude && S.claude.agents) || Object.keys(AGENT_NAMES);
+  const agent = h("select", { "aria-label": "Agent", onchange: e => set("agent", e.target.value) },
+    ...agents.map(x => h("option", { value: x, selected: a.agent === x }, AGENT_NAMES[x] || x)));
+  const source = h("select", { "aria-label": "API key source", onchange: e => set("keySource", e.target.value) },
+    h("option", { value: "default", selected: a.keySource === "default" }, "Server default (ANTHROPIC_API_KEY or ~/.anthropic)"),
+    h("option", { value: "text", selected: a.keySource === "text" }, "Key text"),
+    h("option", { value: "file", selected: a.keySource === "file" }, "Key file on the server"));
+  const rows = [h("label", {}, h("span", {}, "Agent"), agent), h("label", {}, h("span", {}, "API key"), source)];
+  if (a.keySource === "text") {
+    rows.push(h("label", {}, h("span", {}, "Key text"), h("input", { type: "password", class: "text wide", value: a.key,
+      autocomplete: "off", spellcheck: "false", placeholder: "sk-ant-…", "aria-label": "API key text",
+      onchange: e => { a.key = e.target.value.trim(); save(); } })));
+  } else if (a.keySource === "file") {
+    rows.push(h("label", {}, h("span", {}, "Key file"), h("input", { class: "text wide", value: a.keyFile,
+      spellcheck: "false", placeholder: "e.g. ~/.anthropic-ppedit", "aria-label": "API key file on the server",
+      onchange: e => { a.keyFile = e.target.value.trim(); save(); } })));
+  }
+  $("#agent-settings").replaceChildren(...rows,
+    h("div", { class: "hint" }, "Used by new sessions in the Agent tab; running sessions keep the key they started with. "
+      + "Key text is kept in this browser's storage in plain text; a key file keeps it on the server machine "
+      + "instead (its first line is read when a session starts)."),
+    h("div", {}, h("button", { onclick: () => { S.agent = { ...AGENT_DEFAULTS }; save(); renderAgentSettings(); } }, "Reset to defaults")));
 }
 
 // cvxopf solve options group (issue #88): only when cvxopf is installed
@@ -3219,7 +3270,7 @@ async function claudeAct(path, body) {
 }
 
 async function pollClaude() {
-  if (S.exited || conn.down || !S.state || (S.view !== "claude" && !claudeBusy())) return;
+  if (S.exited || conn.down || !S.state || (S.view !== "agent" && !claudeBusy())) return;
   let data;
   try { data = await api("/api/claude", undefined, { background: true }); } catch (_) { return; }
   const was = claudeBusy();
@@ -3228,7 +3279,7 @@ async function pollClaude() {
   const solved = items.slice(claudeSeen).some(t => t.kind === "tool" && t.name === "solve");
   claudeSeen = items.length;
   if (S.claude.revision !== S.state.revision || solved) setState(await api("/api/state", undefined, { background: true }));
-  else { if (was !== claudeBusy()) renderChrome(); if (S.view === "claude") renderClaude(); }
+  else { if (was !== claudeBusy()) renderChrome(); if (S.view === "agent") renderClaude(); }
 }
 
 function claudeToolText(t) {
@@ -3282,9 +3333,10 @@ function renderClaude() {
   const root = $("#claude-root");
   if (!root.value && document.activeElement !== root) root.placeholder = c.default_root;
   root.disabled = !$("#claude-local").checked;
-  $("[data-action=claude-new]").disabled = !c.available;
-  $("#claude-hint").textContent = c.available ? "Each change Claude makes is one undoable edit."
-    : "No Anthropic API key: set ANTHROPIC_API_KEY or put the key in ~/.anthropic, then restart ppedit.";
+  const ready = c.available || agentHasKey();
+  $("[data-action=claude-new]").disabled = !ready;
+  $("#claude-hint").textContent = ready ? "Each change Claude makes is one undoable edit."
+    : "No Anthropic API key: give one in Settings ▸ Agents, or set ANTHROPIC_API_KEY or put the key in ~/.anthropic and restart ppedit.";
   const box = $("#claude-sessions");
   const ids = new Set(c.sessions.map(s => s.id));
   if (!ids.has(claudeTab)) claudeTab = c.sessions.length ? c.sessions[c.sessions.length - 1].id : null;
@@ -3329,7 +3381,7 @@ async function newClaudeSession() {
   const local = $("#claude-local").checked, title = $("#claude-title").value;
   await claudeAct("/api/claude/new", {
     title: title.trim(), model: $("#claude-model").value,
-    web: $("#claude-web").checked, local, root: local ? $("#claude-root").value.trim() : null,
+    web: $("#claude-web").checked, local, root: local ? $("#claude-root").value.trim() : null, ...agentOptions(),
   });
   if ($("#claude-title").value === title) $("#claude-title").value = "";
   const last = S.claude.sessions[S.claude.sessions.length - 1];
@@ -3869,7 +3921,7 @@ async function init() {
     try { await act("/api/solve", solveRequest(qs.get("solve"), qs.get("algorithm"))); } catch (err) { toast(err.message, true); }
     finally { watch(); }
   }
-  const view = ({ tables: "case", series: "multistep" })[qs.get("view")] || qs.get("view");
+  const view = ({ tables: "case", series: "multistep", claude: "agent" })[qs.get("view")] || qs.get("view");  // former tab names (issue #133 for claude)
   if (view && $(`#tabs [data-view="${view}"], #table-tabs [data-view="${view}"]`)) show(view);
 }
 

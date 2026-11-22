@@ -302,13 +302,14 @@ In the editor:
     the SOCP cones and loops the relaxation leaves unmet, or the
     `rateA` = 0 branches cvxopf limits), each linked to its table row. The tab's dot is red when there is
     an error and yellow when there are only warnings.
-  - **Claude**: any number of conversations with Claude, each in its own tab (the
+  - **Agent**: any number of conversations with an agent (Claude), each in its own tab (the
     Anthropic Messages API) that read and edit the open case, check it and
     run PF/OPF. Each session chooses a model and its data sources: the case
     only, the web (search and public data downloads), and/or the files in
     one folder on the server machine. Every change Claude makes is one
     undoable edit and shows up in the other tabs as it happens. Needs an
-    API key in `ANTHROPIC_API_KEY` or `~/.anthropic` (see `ppedit.claude`).
+    API key in `ANTHROPIC_API_KEY` or `~/.anthropic`, or given in Settings
+    (see `ppedit.claude`).
   - **Settings**: the case `baseMVA` and `version`, and the display
     precision (decimal places) of the case table values by unit (defaults:
     MW, MVAr, MVA, MW/min, MVAr/min, $ 2; per-unit impedance, per-unit
@@ -320,6 +321,11 @@ In the editor:
     solver for the convex models (SOCP, DC, copper plate), solver output in
     the log, and other solver options as `name=value` pairs (e.g. IPOPT
     `max_iter=500, tol=1e-8`). Saved in the browser, not in the case.
+    Under *Agents*: the agent used by new Agent-tab sessions (only Claude),
+    and its API key: the server default (`ANTHROPIC_API_KEY` or
+    `~/.anthropic`), key text typed in the page (kept in the browser's
+    storage in plain text), or the name of a file on the server machine
+    whose first line is the key.
   - Undo/redo (Ctrl+Z, Ctrl+Shift+Z) covers every edit; Ctrl+S saves.
 
 DC lines follow the PYPOWER `dcline` format (`pypower.idx_dcline`) and are

@@ -116,10 +116,13 @@ Given a case file, `ppedit.Case` is expected to satisfy:
      `ppedit._cvxopf.MULTISTEP_OPTIONS`) choose the temporal assembly and
      cvxopf `OPFOptions` such as branch limits and the lossy DC loss weight.
 
-The *Claude* tab runs any number of Claude sessions (`ppedit.claude`) that
-read and edit the case through the same checked, undoable edits as the
-browser, optionally using web data or local files, when an Anthropic API
-key is configured.
+The *Agent* tab runs any number of agent sessions that read and edit the
+case through the same checked, undoable edits as the browser, optionally
+using web data or local files. The agent is chosen in the *Settings* tab
+(*Agents*); the only one is Claude (`ppedit.claude`), which needs an
+Anthropic API key: the server default (`ANTHROPIC_API_KEY` or
+`~/.anthropic`), or a key or a key file on the server machine given in the
+*Settings* tab.
 
 *Open ▾* opens a case file chosen on the browser's computer (*Local file…*)
 or downloaded from an `http`/`https` URL typed in the menu (*From URL*). The
@@ -141,9 +144,9 @@ The page takes optional URL parameters, so another tool can open it ready to
 show (pptools `pprun` does): `?solve=pf` or `?solve=opf` runs that solver
 when the page loads (`&algorithm=NAME` picks a PF algorithm or OPF solver as
 in `POST /api/solve`, else the default), and `?view=NAME` opens the tab
-`NAME` (`network`, `case`, `multistep`, `results`, `issues`, `claude`,
-`settings`, or a table name such as `bus`; the former tab names `tables`
-and `series` open the Case and Multistep tabs).
+`NAME` (`network`, `case`, `multistep`, `results`, `issues`, `agent`,
+`settings`, or a table name such as `bus`; the former tab names `tables`,
+`series` and `claude` open the Case, Multistep and Agent tabs).
 Unknown values are ignored, and a solver error is shown as usual.
 
 Each case table can be imported from and exported to a data file
