@@ -27,6 +27,7 @@ Update this file in the same PR that adds, moves, or deletes a file.
 - Change WECC 240 generator costs: `examples/wecc240_gentypes.csv` (or rederive it with `examples/wecc240_gentypes.py`), then `python3 examples/build_wecc240_2018.py`; see `examples/README.md`
 - Change PSS/E `.raw` input: `ppedit/_psse.py` (conversion), `INPUT_FORMATS`/`Case.load` in `ppedit/case.py`; `ppedit/_test/test_psse.py` and `ppedit/_test/data/psse_v*.raw`
 - Change table data import/export: `ppedit/_tableio.py` (file formats), `Case.import_rows` in `ppedit/case.py`, `/api/table/*` in `ppedit/server.py`; `importRows`/`exportRows` in `ppedit/static/app.js`; `ppedit/_test/test_tableio.py`
+- Change solve progress or the Stop button: `ppedit/_solveproc.py`; `_ipopt_progress` and `progress` of `runopf` in `ppedit/_cvxopf.py`; `job` of `Case.solve`; `/api/solve/progress`, `/api/solve/stop` in `ppedit/server.py`; `watchSolve`/`busyRefresh` in `ppedit/static/app.js`; `ppedit/_test/test_solveproc.py`
 - Add an API route: `ppedit/server.py` (and its docstring API list); `ppedit/_test/test_server.py`; call it from `ppedit/static/app.js`
 - Change the UI: `ppedit/static/{index.html,style.css,app.js}`
 - Change geodata handling or map layers: `Case.load_geodata`/`_geo_*` helpers in `ppedit/case.py`; `geoLayout`/`renderMap` in `ppedit/static/app.js`; `ppedit/_test/test_geodata.py`
@@ -45,6 +46,7 @@ Update this file in the same PR that adds, moves, or deletes a file.
 | `ppedit/case.py` | `Case`: tables, `.py`/`.json`/`.glm` I/O (and `.raw` input), edits, validation, PF/OPF | tested by `_test/test_case.py` and its doctest |
 | `ppedit/_psse.py` | PSS/E RAW reader (revisions 23–35), after MATPOWER `psse2mpc` | private; read only; tested by `_test/test_psse.py` |
 | `ppedit/_cvxopf.py` | cvxopf OPF backend for `Case.solve` (`CVXOPF-*` solvers): case in, `runopf`-layout results out | private; optional dependency; tested by `_test/test_cvxopf.py` (skipped without cvxopf) |
+| `ppedit/_solveproc.py` | runs a `CVXOPF-*` solve in a child process with progress reports and stop (`SolveJob`, `run`) | private; tested by `_test/test_solveproc.py` |
 | `ppedit/_tableio.py` | table and time series data import/export with pandas (`read_rows`, `dump_rows`, `read_series`, `dump_series`, `table_formats`) | private; tested by `_test/test_tableio.py` |
 | `ppedit/_dcline.py` | DC line model for the PYPOWER solver (`userfcn` callbacks, as `pypower.toggle_dcline`) | private; tested by `_test/test_dcline.py` |
 | `ppedit/claude.py` | `Sessions`: Claude API conversations with tools that edit the case, web and local data sources | tested by `_test/test_claude.py` with a fake client |

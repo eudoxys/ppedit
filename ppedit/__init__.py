@@ -258,7 +258,10 @@ What is not promised
     voltage angles. The cvxopf solve options (Settings tab, `options` of
     `ppedit.Case.solve`) cover numerical preparation, solver choice,
     solver output and solver options; cvxopf's device models (storage,
-    nondispatchable units, curtailable loads) are not offered.
+    nondispatchable units, curtailable loads) are not offered. From the
+    editor, a `CVXOPF-*` solve runs in a separate process that reports
+    its progress and that *Stop* ends at any point (issue #130); PYPOWER
+    solves cannot be stopped.
 
   - Multistep OPF (issue #124) needs a `CVXOPF-*` solver and a time series.
     The steps share one problem but nothing couples them: there are no ramp
@@ -266,6 +269,9 @@ What is not promised
     constraints ppedit adds to cvxopf's problem (cvxopf has none), so they
     need the default preparation. The diagram draws the case loads, not the
     step's; the Results tab, solution columns and dispatch show the step.
+    Full AC multistep memory grows with the number of steps inside cvxopf
+    (about 0.5 GB per step on case118 and 2.3 GB on `wecc240_2020`), so
+    long AC horizons do not fit in memory; the DC models are light.
     Series columns name generators and DC lines by row number, which is
     kept up to date only by edits made in ppedit. Full AC (`CVXOPF-AC`)
     multistep problems need memory in proportion to the number of steps

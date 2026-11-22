@@ -125,6 +125,17 @@ open case was read, see `ppedit.Case.source`, or `null`), and `loads_off`
     `steps`). The result's `messages` (solver errors and
     warnings, with an optional `detail`: physical meaning and constraints
     involved) are listed on the page's Issues tab
+  - `GET  /api/solve/progress`: progress of the running solve:
+    `running`, `elapsed` (s), `stoppable` (a `CVXOPF-*` solve, run in a
+    child process), `stopping`, `phase`, `text` (one line for display,
+    e.g. `IPOPT iteration 120 of at most 3000, primal infeasibility
+    3.20e-04`), and while IPOPT iterates `iteration`, `max_iter`,
+    `objective`, `inf_pr`, `inf_du` (see `ppedit._solveproc`); only
+    `running` false when no solve has run
+  - `POST /api/solve/stop`: stop the running `CVXOPF-*` solve (its child
+    process is killed); returns `running` and `stopping` (false when
+    there is nothing to stop). The pending `/api/solve` request then
+    returns a failed result with `stopped` true
   - `POST /api/apply`: `{"step"?}` copy the last solution into the case
     (`step`: the step of a multistep solution, counted from 0; default 0)
   - `POST /api/geodata`: `{"filename": ..., "text": ...}` (CSV upload),
@@ -185,6 +196,7 @@ from flask import Flask, jsonify, request, send_from_directory, Response, redire
 from ppedit.case import Case, CaseError, COLUMNS, RESULT_COLUMNS, TABLES, FORMATS, INPUT_FORMATS, \
     builtin_cases, solvers, writable_format
 from ppedit.claude import Sessions
+from ppedit._solveproc import SolveJob, describe
 from ppedit._tableio import table_formats, table_read_formats, read_rows, dump_rows, \
     read_series, dump_series
 
@@ -454,6 +466,8 @@ class Editor:
         self.loads_off = {}
         """Loads switched off by `toggle_load`: bus number -> `[Pd, Qd]` to restore"""
         self.lock = threading.RLock()
+        self.job = None
+        """`ppedit._solveproc.SolveJob` of the running or last solve (or `None`)"""
 
     def _snapshot(self):
         return (copy.deepcopy(self.case.tables),self.case.baseMVA,
@@ -862,9 +876,30 @@ def create_app(case:Case|None=None,path:str|None=None,allow_remote:bool=False,
     def solve():
         data = body()
         with editor.lock:
-            editor.result = editor.case.solve(data.get("kind","pf"),
-                data.get("algorithm"),data.get("options"),bool(data.get("multistep")))
+            job = editor.job = SolveJob()
+            try:
+                editor.result = editor.case.solve(data.get("kind","pf"),
+                    data.get("algorithm"),data.get("options"),bool(data.get("multistep")),job=job)
+            finally:
+                job.done = True
             return jsonify(editor.state())
+
+    # no editor.lock in the two routes below: the solve request holds it
+    @app.get("/api/solve/progress")
+    def solve_progress():
+        job = editor.job
+        if job is None:
+            return jsonify(running=False)
+        status = job.status()
+        status["text"] = describe(status)
+        return jsonify(status)
+
+    @app.post("/api/solve/stop")
+    def solve_stop():
+        job = editor.job
+        if job is None or job.done:
+            return jsonify(running=False,stopping=False)
+        return jsonify(running=True,stopping=job.stop())
 
     @app.post("/api/apply")
     def apply():

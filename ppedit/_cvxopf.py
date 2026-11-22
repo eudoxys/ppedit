@@ -259,6 +259,56 @@ def _capture_output(log,enabled):
             text = tmp.read().decode(errors="replace")
             log.write("\nSolver output\n-------------\n" + text + ("" if text.endswith("\n") else "\n"))
 
+PROGRESS_INTERVAL = 0.5
+"""Least seconds between two IPOPT iteration progress reports"""
+
+IPOPT_MAX_ITER = 3000
+"""IPOPT's default `max_iter`, shown in progress reports"""
+
+@contextlib.contextmanager
+def _ipopt_progress(progress,max_iter):
+    """Report IPOPT progress to `progress` while solving: a `derivatives`
+    report when CVXPY starts building its derivative oracles (the
+    differentiation structure, slow for large AC models) and `iterate`
+    reports from IPOPT's intermediate callback. CVXPY's IPOPT interface
+    (`cvxpy.reductions.solvers.nlp_solvers.nlp_solver.Oracles`, cvxpy 1.9)
+    has no callback of its own; cyipopt calls the problem object's
+    `intermediate` method after each iteration when it has one, so one is
+    added to `Oracles` for the duration of the solve. Does nothing when
+    `progress` is `None` or the CVXPY internals are not found."""
+    if progress is None:
+        yield
+        return
+    try:
+        from cvxpy.reductions.solvers.nlp_solvers.nlp_solver import Oracles # pylint: disable=import-outside-toplevel
+    except ImportError:
+        yield
+        return
+    if hasattr(Oracles,"intermediate"):  # CVXPY has its own now: leave it alone
+        yield
+        return
+    init = Oracles.__init__
+    last = [0.0]
+    def oracles_init(self,*args,**kwargs):
+        progress({"phase":"derivatives","text":"computing the derivative structure"})
+        init(self,*args,**kwargs)
+        progress({"phase":"iterate","text":"IPOPT is starting","iteration":None,"max_iter":max_iter})
+    def intermediate(self,alg_mod,iter_count,obj_value,inf_pr,inf_du,*args): # pylint: disable=unused-argument
+        now = time.time()
+        if now - last[0] >= PROGRESS_INTERVAL:
+            last[0] = now
+            progress({"phase":"iterate","text":f"IPOPT iteration {iter_count}","iteration":int(iter_count),
+                "max_iter":max_iter,"objective":float(obj_value),"inf_pr":float(inf_pr),
+                "inf_du":float(inf_du)})
+        return True
+    Oracles.__init__ = oracles_init
+    Oracles.intermediate = intermediate
+    try:
+        yield
+    finally:
+        Oracles.__init__ = init
+        del Oracles.intermediate
+
 def _hvdc_links(ppc,note):
     """Return the cvxopf `HVDCLink` list for the in-service DC lines and
     their row numbers in `ppc["dcline"]` (`cvxopf.hvdc_from_dcline`, cvxopf
@@ -695,7 +745,8 @@ def _storage_constraints(build,units,T,delta,base,ng):
         list(build.prob.constraints) + extra)
     return out
 
-def runopf(ppc:dict,formulation:str,log,options:dict|None=None,series:dict|None=None) -> dict:
+def runopf(ppc:dict,formulation:str,log,options:dict|None=None,series:dict|None=None,
+        progress=None) -> dict:
     """Solve `ppc` with the cvxopf `formulation` (see the module docstring)
 
     Arguments
@@ -721,6 +772,14 @@ def runopf(ppc:dict,formulation:str,log,options:dict|None=None,series:dict|None=
         are set to the smallest `Pmin` and largest `Pmax` of the horizon and
         `Pmin(t) <= Pg(t) <= Pmax(t)` is added to the CVXPY problem; this
         needs the `default` preparation.
+
+      - `progress`: `None`, or a function called with a progress report
+        dict at each phase of the solve: `phase` (`build`, `derivatives`,
+        `iterate`, `solve`, `results`) and `text`; while IPOPT iterates
+        (`ac`), also `iteration`, `max_iter`, `objective` (IPOPT's internal
+        objective value), `inf_pr` and `inf_du` (primal and dual
+        infeasibility), at most every `PROGRESS_INTERVAL` seconds
+        (`_ipopt_progress`)
 
     Returns
     -------
@@ -764,10 +823,12 @@ def runopf(ppc:dict,formulation:str,log,options:dict|None=None,series:dict|None=
     cgen = gen[gkeep].copy()
     if series and series.get("gen_limited"):
         kept = np.cumsum(gkeep) - 1
+        pmin = np.asarray(series["gen_Pmin"],dtype=float).min(axis=0) # once, not per gen (T x gens)
+        pmax = np.asarray(series["gen_Pmax"],dtype=float).max(axis=0)
         for n in series["gen_limited"]:
             if gkeep[n]:
-                cgen[kept[n],9] = float(np.min(np.asarray(series["gen_Pmin"])[:,n]))
-                cgen[kept[n],8] = float(np.max(np.asarray(series["gen_Pmax"])[:,n]))
+                cgen[kept[n],9] = float(pmin[n])
+                cgen[kept[n],8] = float(pmax[n])
     ccost = gencost[gkeep]
     units = _storage_units(series,ppc,gkeep,live,note) if series else []
     if units:
@@ -809,8 +870,12 @@ def runopf(ppc:dict,formulation:str,log,options:dict|None=None,series:dict|None=
     if series:
         log.write(f"cvxopf multistep horizon: {int(series['T'])} step(s) of {float(series['delta']):g} h; "
             + ", ".join(f"{k}={v}" for k,v in {**ms_build,**ms_fields}.items()) + "\n")
+    report = progress or (lambda p: None)
+    solver = opts["solver"] or ("IPOPT" if formulation == "ac" else "CLARABEL")
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
+        report({"phase":"build","text":f"building the {formulation} model"
+            + (f" ({int(series['T'])} steps)" if series else "")})
         if series:
             build = build_opf_multistep(case,formulation=formulation,hvdc=links or None,
                 options=build_options,**{"automatic_sparse_dispatch":True,**ms_build}, # issue #122
@@ -822,8 +887,11 @@ def runopf(ppc:dict,formulation:str,log,options:dict|None=None,series:dict|None=
         else:
             build = build_opf(case,formulation=formulation,hvdc=links or None,options=build_options,
                 automatic_sparse_dispatch=True) # issue #122: keep CVXPY's sparse derivatives
-        with _capture_output(log,opts["verbose"]):
+        report({"phase":"solve","text":f"solving with {solver}"})
+        with _capture_output(log,opts["verbose"]),_ipopt_progress(progress,
+                opts["solver_options"].get("max_iter",IPOPT_MAX_ITER)):
             build.solve(**kwargs)
+        report({"phase":"results","text":"reading the results"})
         res = extract_results(build)
         stored = None
         if units:  # take the charging generators out of the results
