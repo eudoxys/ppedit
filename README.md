@@ -161,7 +161,11 @@ In the editor:
     loading labels need a solution, so they are greyed out (with a note in
     the menu) until **Run PF** or **Run OPF**. **None** clears every label
     of the current style and **Defaults** restores its standard ones. The
-    choices are remembered by the browser.
+    choices are remembered by the browser. Where the network is dense, data
+    labels that would overlap another label or a bus symbol are not drawn
+    (bus numbers always are); zoom in to see them. Moving the pointer over
+    a bus or branch shows a popup with the items chosen in **Labels ▾**,
+    including hidden ones, with the decimal places set on the Settings tab.
 
     The search box to the right of **Map ▾** finds a bus or branch: type
     a query and press Enter. `N` or `bus N` finds bus N (or, if there is no

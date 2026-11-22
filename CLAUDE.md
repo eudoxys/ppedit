@@ -206,7 +206,13 @@ API key to start sessions; tests use a fake client).
   `ppedit.labels`. Every item draws in every style; per-style defaults
   reproduce the drawing from before the menu existed. `:flow` and
   `:loading` need a solution (greyed out until one exists). Data labels
-  are not placed to avoid collisions; DC lines get none.
+  are not moved to avoid collisions; DC lines get none. Overlapping data
+  labels are hidden after each render (decision #60, issue #139,
+  `hideOverlaps`; classes `dl` hideable, `dl-fixed`/`dl-body` obstacles),
+  and hovering a bus or branch shows `#net-tip` (`setupNetTip`, `busTip`,
+  `branchTip`) listing only the Labels-menu items with the Settings
+  precision (`fmtKey`, `fmtCell`). Network hit targets carry `data-tip`,
+  not `<title>` (area regions and names still use `<title>`).
 - Search box (`#net-search`, `searchItems`/`runSearch`/`centerOn` in
   `app.js`): runs on Enter; client-side only, over buses, branches and DC
   lines (`A-B` and `branch N` include DC lines; `A-B` with no line between

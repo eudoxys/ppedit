@@ -200,9 +200,11 @@ What is not promised
     on the next click; they are not saved in the case file, and editing
     `Pd` or `Qd`, renumbering or deleting the bus, or opening another case
     forgets them.
-    Label choices (**Labels ▾**) are kept in the browser, not in the case,
-    and labels are not placed to avoid each other, so many data labels on a
-    dense diagram overlap.
+    Label choices (**Labels ▾**) are kept in the browser, not in the case.
+    Labels are not moved to make room: a data label that would overlap
+    another label or a bus symbol is not drawn (bus numbers always are), so
+    a dense diagram shows few data labels until zoomed in; the popup shown
+    over a bus or branch lists the chosen items anyway.
 
   - Claude sessions send the case data they read, and the files and web
     pages they use, to the Anthropic API; they are kept in server memory

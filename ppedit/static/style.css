@@ -208,6 +208,13 @@ td.bad input { color: var(--err); }
   border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-size: 11px; color: var(--muted);
   display: grid; gap: 4px;
 }
+/* diagram popup (issue #139): follows the pointer over buses, branches and devices */
+.net-tip {
+  position: absolute; z-index: 20; pointer-events: none; white-space: pre-wrap; max-width: 360px;
+  background: rgba(255,255,255,.97); border: 1px solid var(--line-strong); border-radius: 5px;
+  padding: 5px 8px; font: 11px/1.35 var(--mono); color: var(--ink); box-shadow: 0 2px 8px rgba(0,0,0,.12);
+}
+.net-tip[hidden] { display: none; }
 .legend .row { display: flex; align-items: center; gap: 6px; }
 .legend .sw { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .legend .bar { width: 120px; height: 8px; border-radius: 4px; }
