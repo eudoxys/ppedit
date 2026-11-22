@@ -106,17 +106,20 @@ NREL areas, including `wecc240_2018.py`.
 `timestamp` column and one column per generator row counted from 1. Read
 it on the Multistep tab with *Import ▾ › Panel…* (table gen, value Pmax,
 columns are row numbers); with the case's `real_load` and `reactive_load`
-series (August 2020) it combines by time into the 744 hours of August. It
-is built from the WECC 240 node files of eudoxys/generation (`data/wecc`,
+series (August 2020) it combines by time into the 744 hours of August; its
+August hours are the case's `generation` series. It is built from the WECC 240 node files of eudoxys/generation (`data/wecc`,
 2018 to 2022) by
 
     python3 examples/build_wecc240_generation.py GENERATION/data/wecc [--wecc240 WECC240/wecc240/data]
 
 (`--start`, `--end` and `--case` choose other hours or another case with
 geodata). Each node's `Pmax` is the operating capacity of the dispatchable
-categories (all but solar and wind, storage included) plus the actual solar
-and wind net generation, shared among the node's generators in proportion
-to their case `Pmax`. A generator is at the node with its bus's geohash; a
+categories other than storage (all but solar, wind, battery and pumped
+storage) plus the actual solar and wind net generation, shared among the
+node's generators in proportion to their case `Pmax`. The storage
+generators (case `Pmin` < 0, the 43 of `wecc240_storage.csv`) have no
+column and keep their case `Pmax` (their storage rating): the node storage
+capacity is theirs, and the build report compares the two at each node. A generator is at the node with its bus's geohash; a
 US generator elsewhere goes to the node its county's generation went to
 (wecc240 `county_node_map.csv`, the county named from the bus FIPS code by
 wecc240 `counties.csv`). The 14 generators in Mexico and Canada have no
@@ -132,7 +135,6 @@ pumped hydro: 24 hours of capacity at `Smax`, `eta_ch` 0.8, `eta_dis` 0.9,
 no self-discharge, the default aging cost (0.01 $/MWh). The other 40 are
 taken as batteries: 4 hours, `eta_ch` and `eta_dis` 0.9, `self_discharge`
 0.02 per month, aging 5 $/MWh. Every unit starts and must end half full
-(`Es` = `Eend` = `Emax`/2). The case's `generation` series gives the
-`Pmax` of 42 of these generators by hour and replaces the case `Pmax` in
-a multistep OPF; it is 0 for the pumped hydro rows, so they do not
-discharge there unless those series columns are changed.
+(`Es` = `Eend` = `Emax`/2). The case's `generation` series (August of
+`wecc240_generation.csv.gz`) has no column for these generators, so their
+case `Pmax` holds in every step of a multistep OPF.

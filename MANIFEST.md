@@ -94,7 +94,7 @@ Update this file in the same PR that adds, moves, or deletes a file.
 | `examples/wecc240_2020_real_load.csv` | series file of bus `Pd` by hour for August 2020 (`bus.Pd.N` columns), the `real_load` series of `wecc240_2020.py` | data; ~745 lines, use `head` |
 | `examples/wecc240_2020_reactive_load.csv` | series file of bus `Qd` by hour for August 2020 (`bus.Qd.N` columns), the `reactive_load` series of `wecc240_2020.py` | data; ~745 lines, use `head` |
 | `examples/wecc240_netload.csv.gz` | hourly net load by WECC 240 node geohash, 2018-2022 (113 node columns) | data; ~20 MB, don't read |
-| `examples/wecc240_generation.csv.gz` | hourly generator `Pmax` panel for 2020 for the `wecc240_2020.py` generator rows (columns are gen rows from 1) | written by `build_wecc240_generation.py`; ~11 MB, don't read |
+| `examples/wecc240_generation.csv.gz` | hourly generator `Pmax` panel for 2020 for the `wecc240_2020.py` generator rows (columns are gen rows from 1; none for the storage generators; August is the case's `generation` series) | written by `build_wecc240_generation.py`; ~10 MB, don't read |
 | `examples/wecc240_storage.csv` | `storage` rows for the `wecc240_2020.py` generators with negative `Pmin` (43 rows: 40 batteries, 4 h; pumped hydro gen rows 3, 5, 6, 24 h; half full at start and end) | data; import into the storage table |
 | `examples/build_wecc240_generation.py` | builds `wecc240_generation.csv.gz` from the eudoxys/generation WECC 240 node files and the wecc240 county-node map | maintenance script; needs a checkout of `eudoxys/generation` `data/wecc` |
 | `examples/wecc240_areas.py` | sets the areas of a WECC 240 case (default `wecc240_2020.py`) from `wecc240_ba.csv`, in place | maintenance script |
