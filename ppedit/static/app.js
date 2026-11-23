@@ -216,8 +216,17 @@ function busyRefresh() {
   if (busy.timer) return;  // still within BUSY_DELAY
   const oldest = [...busy.items.values()].reduce((a, b) => (a.t0 <= b.t0 ? a : b));
   const ms = performance.now() - oldest.t0;
-  el.querySelector(".busy-label").textContent = oldest.label + "…" + (ms >= BUSY_ELAPSED ? ` ${Math.floor(ms / 1000)} s` : "")
+  // the status sits at the right end of the tab bar, no wider than the space after the last tab
+  const tabs = $("#tabs").getBoundingClientRect(), text = el.querySelector(".busy-text");
+  if (tabs.height) {
+    const last = [...$("#tabs").children].reduce((r, b) => Math.max(r, b.getBoundingClientRect().right), tabs.left);
+    text.style.top = `${tabs.top + tabs.height / 2}px`;
+    text.style.maxWidth = `${Math.max(140, tabs.right - last - 40)}px`;
+  }
+  const label = el.querySelector(".busy-label");
+  label.textContent = oldest.label + "…" + (ms >= BUSY_ELAPSED ? ` ${Math.floor(ms / 1000)} s` : "")
     + (busy.detail ? ` · ${busy.detail}` : "");
+  label.title = label.textContent;
   const stop = el.querySelector(".busy-stop");
   stop.hidden = !busy.stop;
   stop.onclick = busy.stop;

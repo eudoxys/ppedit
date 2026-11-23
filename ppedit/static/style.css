@@ -439,11 +439,14 @@ details summary { cursor: pointer; color: var(--muted); margin: 14px 0 6px; }
 }
 @keyframes busy-slide { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
 .busy-text {
-  position: absolute; top: 52px; left: 50%; transform: translateX(-50%); /* below the top bar */
+  /* at the right edge of the tab bar, clear of the tabs (busyRefresh sets top to the bar's middle) */
+  position: absolute; top: 63px; right: 14px; transform: translateY(-50%);
   background: var(--ink); color: #fff; padding: 4px 12px; border-radius: 12px;
   font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.2); white-space: nowrap;
 }
 .busy-text { display: flex; align-items: center; gap: 10px; }
+.busy-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; pointer-events: auto; }
+.busy-stop { flex: none; }
 .busy-stop {
   pointer-events: auto; cursor: pointer !important; font-size: 11px; padding: 1px 9px;
   border: 1px solid #c98a8a; border-radius: 9px; background: #8a2e2e; color: #fff;

@@ -238,7 +238,7 @@ In the editor:
     edited meanwhile, the result is discarded (it would not match the
     case) and a message says so. Reloading the page during a solve
     follows it again. While a `CVXOPF-*`
-    solve runs, the busy label shows its phase or IPOPT iteration and
+    solve runs, the busy label (at the right end of the tab bar) shows its phase or IPOPT iteration and
     infeasibility, and a **Stop** button ends it (the case is unchanged).
     Run PF lists the PYPOWER power flow algorithms
     (Newton, fast-decoupled XB and BX, Gauss-Seidel). Run OPF lists the
