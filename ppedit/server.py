@@ -111,6 +111,9 @@ open case was read, see `ppedit.Case.source`, or `null`), and `loads_off`
   - `POST /api/series`: `{"delta", "name"?}` set the hours per step of a
     series (`name` may be left out when there is one), or `{"clear": true,
     "name"?}` remove the series `name`, or all of them (both undoable)
+  - `POST /api/series/apply`: `{"step"}` copy the values of combined series
+    step `step` (counted from 0) into the case (`Case.apply_step`; one undo
+    step); the state's `applied` gives `step`, `label` and `changed`.
   - `GET  /api/series/export?format=csv&name=...`: download the series
     `name`, or without `name` the combined series, as a data file (a
     `time` column, then the series columns), named
@@ -981,6 +984,21 @@ def create_app(case:Case|None=None,path:str|None=None,allow_remote:bool=False,
             else:
                 editor.edit(lambda: editor.case.set_series_delta(data.get("delta"),name))
             return jsonify(editor.state())
+
+    @app.post("/api/series/apply")
+    def apply_series_step():
+        data = body()
+        with editor.lock:
+            try:
+                step = int(data.get("step"))
+            except (TypeError,ValueError) as err:
+                raise CaseError("step must be a step number counted from 0") from err
+            changed = []
+            editor.edit(lambda: changed.append(editor.case.apply_step(step)))
+            out = editor.state()
+            out["applied"] = {"step":step,"label":editor.case.combined_series()["index"][step],
+                "changed":changed[0]}
+            return jsonify(out)
 
     @app.get("/api/series/export")
     def export_series():

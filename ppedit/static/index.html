@@ -175,11 +175,12 @@
         <button data-menu="series-export-menu" id="series-export-btn">Export ▾</button>
         <div id="series-export-menu" class="dropdown left" role="menu"></div>
       </div>
-      <label class="inline" title="Length of each time step (hours)">Step <input id="series-delta" class="num" size="5" aria-label="Hours per time step"> h</label>
+      <label class="inline" title="Length of each time step (hours)">Step length <input id="series-delta" class="num" size="5" aria-label="Hours per time step"> h</label>
       <button data-action="series-clear" id="series-clear" class="danger">Remove series</button>
       <input type="file" id="series-input" hidden>
       <span class="hint" id="series-hint"></span>
     </div>
+    <div id="series-step" class="table-tools series-step" hidden></div>
     <div id="series-body" class="series-body"></div>
   </section>
   <section id="view-results" class="view"></section>
