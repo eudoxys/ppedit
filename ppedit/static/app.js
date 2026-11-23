@@ -18,6 +18,7 @@ const S = {
   step: 0,             // step of a multistep solution shown (issue #124, stepView)
   seriesName: null,    // series shown on the Multistep tab ("" = all combined; currentSeries)
   seriesStep: { on: false, step: 0 }, // step chosen on the Multistep tab (renderSeriesStep; combined steps from 0)
+  stepsTab: "data",    // Results Steps block: "data" (table) or "plot" (stepsPlot)
   issueOpen: null,     // message of the solver warning whose detail is open (Issues tab)
   pos: {},             // bus_i -> {x, y}
   zoom: { k: 1, x: 0, y: 0 },
@@ -3317,6 +3318,78 @@ function stepTable(r) {
   const head = ["step", "time", "cost $/h", "Pg MW", "Pd MW", "loss MW"].concat(stores ? ["storage MW", "stored MWh"] : []);
   return block("Steps", head, rows, r.steps.map((_, i) => i === r.step ? Array(head.length).fill("current") : []), "wide");
 }
+// Steps block of a multistep result: a tab bar picks the table (stepTable) or
+// an interactive time-series plot of the same columns (stepsPlot, Plotly).
+function stepsBlock(r) {
+  const tab = (key, text) => h("button", { role: "tab", class: "steps-tab" + (S.stepsTab === key ? " active" : ""),
+    "aria-selected": String(S.stepsTab === key), onclick: () => { S.stepsTab = key; renderView(); } }, text);
+  const bar = h("div", { class: "steps-tabs", role: "tablist", "aria-label": "Steps view" }, tab("data", "Data"), tab("plot", "Plot"));
+  if (S.stepsTab !== "plot") {
+    const table = stepTable(r);
+    table.querySelector("h3").append(bar);
+    return table;
+  }
+  return h("div", { class: "res-block wide" }, h("h3", {}, "Steps", bar), stepsPlot(r));
+}
+// Plotly is vendored (ppedit/static/vendor, decision #2) and loaded on first use
+let plotlyLoad = null;
+function loadPlotly() {
+  if (window.Plotly) return Promise.resolve(window.Plotly);
+  plotlyLoad = plotlyLoad || new Promise((ok, fail) => {
+    const s = document.createElement("script");
+    s.src = "/static/vendor/plotly-basic.min.js";
+    s.onload = () => ok(window.Plotly);
+    s.onerror = () => { plotlyLoad = null; fail(new Error("could not load the plotting library")); };
+    document.head.append(s);
+  });
+  return plotlyLoad;
+}
+// x values of the steps: times when every label starts with a date and time
+// (STEP_TIME; the UTC offset is dropped, so times show as labelled), else numbers
+function stepAxis(r) {
+  const times = r.steps.map(s => { const m = STEP_TIME.exec(String(s.label)); return m ? `${m[1]} ${m[2]}` : null; });
+  return times.every(x => x) ? { x: times, title: "time", date: true } : { x: r.steps.map((_, i) => i + 1), title: "step", date: false };
+}
+// The plot element is kept across renders so Plotly.react keeps the zoom
+// (uirevision) when the step or the result changes.
+const stepsPlotEl = h("div", { id: "steps-plot", class: "steps-plot" });
+function stepsPlot(r) {
+  const ax = stepAxis(r), stores = r.steps.some(s => (s.storage || []).some(x => x.solved));
+  const sum = (s, f) => s.reduce((a, x) => a + f(x), 0);
+  const line = (name, y, extra = {}) => ({ type: "scatter", mode: "lines+markers", marker: { size: 4 }, name, x: ax.x, y, ...extra });
+  const traces = [
+    line("Pg MW", r.steps.map(s => sum(s.gen, g => g.Pg))),
+    line("Pd MW", r.steps.map(s => sum(s.areas || [], a => a.Pd))),
+    line("loss MW", r.steps.map(s => s.losses_MW)),
+    ...(stores ? [line("storage MW", r.steps.map(s => sum((s.storage || []).filter(x => x.solved), x => x.Pdis - x.Pch)))] : []),
+    line("cost $/h", r.steps.map(s => s.objective), { yaxis: "y2", line: { dash: "dot" } }),
+    ...(stores ? [line("stored MWh", r.steps.map(s => sum((s.storage || []).filter(x => x.solved), x => x.E ?? 0)), { yaxis: "y3", line: { dash: "dash" } })] : []),
+  ];
+  const cur = ax.x[r.step];
+  const layout = {
+    uirevision: "steps", height: 380, margin: { l: 60, r: stores ? 110 : 60, t: 10, b: 50 },
+    hovermode: "x unified", legend: { orientation: "h", y: -0.2 },
+    xaxis: { title: { text: ax.title }, type: ax.date ? "date" : "linear", domain: [0, stores ? 0.9 : 1] },
+    yaxis: { title: { text: "MW" }, zeroline: true },
+    yaxis2: { title: { text: "$/h" }, overlaying: "y", side: "right", showgrid: false },
+    ...(stores ? { yaxis3: { title: { text: "MWh" }, overlaying: "y", side: "right", anchor: "free", position: 1, showgrid: false } } : {}),
+    shapes: [{ type: "line", xref: "x", yref: "paper", x0: cur, x1: cur, y0: 0, y1: 1, line: { color: "#c47f17", width: 1.5, dash: "dot" } }],
+  };
+  const name = (S.state.case.name || "case").replace(/[^\w.-]+/g, "_");
+  // no "Share chart" (it uploads the data to Chart Studio) and no selection tools
+  const config = { responsive: true, displaylogo: false, scrollZoom: true, showSendToCloud: false,
+    modeBarButtonsToRemove: ["sendDataToCloud", "select2d", "lasso2d"],
+    toImageButtonOptions: { format: "png", filename: `${name}_steps`, scale: 2 } };
+  loadPlotly().then(P => {
+    P.react(stepsPlotEl, traces, layout, config);
+    if (!stepsPlotEl.dataset.bound) {  // a click on a point shows that step
+      stepsPlotEl.dataset.bound = "1";
+      stepsPlotEl.on("plotly_click", ev => { const p = ev.points && ev.points[0]; if (p) setStep(p.pointIndex); });
+    }
+  }).catch(err => { stepsPlotEl.replaceChildren(h("div", { class: "empty" }, `No plot: ${err.message}`)); });
+  return h("div", { class: "steps-plot-wrap" }, stepsPlotEl,
+    h("div", { class: "hint" }, "Drag to zoom, double-click to reset; the toolbar pans, zooms and saves the plot as a PNG. Click a point to show that step. Click a legend entry to hide or show it."));
+}
 // storage of the step shown (result.storage, issue #128): one row per storage table row
 function storageBlock(r) {
   const t = S.state.case.tables;
@@ -3384,7 +3457,7 @@ function renderResults() {
         .concat(r.kind === "opf" ? ["price $/MWh"] : []),
         r.areas.map(a => [a.area, a.name || "–", a.buses, fmt(a.Pg, 2), fmt(a.Pd, 2), fmt(a.shunt_MW, 2), fmt(a.losses_MW, 2), fmt(a.export_MW, 2), a.price_ref_bus ?? "–"]
           .concat(r.kind === "opf" ? [fmt(a.lam_P, 3)] : [])), [], "wide") : null,
-      multi ? stepTable(r) : null));
+      multi ? stepsBlock(r) : null));
   }
   kids.push(h("details", { open: !r.success }, h("summary", {}, "Solver report"),
     h("pre", { class: "log" }, (r.log || "(no output)") + (r.stepLog ? "\n" + r.stepLog : ""))));

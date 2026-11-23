@@ -10,7 +10,8 @@ specific to this package.
 A local web application for editing PYPOWER cases and Arras Energy
 GridLAB-D `module pypower` models: a Flask server (`ppedit/server.py`) holds
 one `Case` (`ppedit/case.py`) in memory and serves a plain HTML/CSS/JS editor
-(`ppedit/static/`, no build step, no JS dependencies). Python 3.12, alpha.
+(`ppedit/static/`, no build step; the only third-party JS is Plotly, vendored in
+`ppedit/static/vendor/`, decision #2). Python 3.12, alpha.
 
 - Docs site: https://www.eudoxys.com/ppedit (pdoc from docstrings)
 - Maintainer: David P. Chassin, Eudoxys Sciences LLC
@@ -312,6 +313,10 @@ API key to start sessions; tests use a fake client).
   `at_step`, `_series_input`; a column in several series is summed);
   state `series_combined` carries its summary (with all step labels,
   `index`) or error, and `currentSeries()`/`S.seriesName` pick the one shown.
+  Results Steps block: Data/Plot tabs (`stepsBlock`, `S.stepsTab`); the plot
+  (`stepsPlot`, `loadPlotly`, `stepsPlotEl` kept across renders for
+  `uirevision` zoom) uses the vendored Plotly basic bundle; don't edit it,
+  replace it with a newer release and update its version in DESIGN #2.
   Step controls and Copy to case (`renderSeriesStep`, `S.seriesStep`,
   `stepTimes`, `POST /api/series/apply`, `Case.apply_step`) work on
   combined steps; `seriesStepRow` maps the step to the shown series' row.

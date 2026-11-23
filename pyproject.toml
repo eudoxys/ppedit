@@ -3,12 +3,13 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["ppedit","ppedit.static"]
+packages = ["ppedit","ppedit.static","ppedit.static.vendor"]
 
 [tool.setuptools.package-data]
 # list every file pattern the package reads at run time
 ppedit = ["*.py"]
 "ppedit.static" = ["*.html", "*.css", "*.js"]
+"ppedit.static.vendor" = ["*.js", "*.txt"]
 
 [tool.setuptools.dynamic]
 dependencies = {file=["requirements.txt"]}
