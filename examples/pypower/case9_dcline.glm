@@ -1,0 +1,582 @@
+// case9_dcline: written by ppedit
+module pypower
+{
+    version 2;
+    baseMVA 100;
+}
+
+//
+// bus
+//
+object pypower.bus
+{
+    name "pp_bus_1";
+    bus_i 1;
+    type REF;
+    Pd 0 MW;
+    Qd 0 MVAr;
+    Gs 0 MW;
+    Bs 0 MVAr;
+    area 1;
+    Vm 1 pu.kV;
+    Va 0 deg;
+    baseKV 345 kV;
+    zone 1;
+    Vmax 1.1 pu.kV;
+    Vmin 0.9 pu.kV;
+}
+object pypower.bus
+{
+    name "pp_bus_2";
+    bus_i 2;
+    type PV;
+    Pd 0 MW;
+    Qd 0 MVAr;
+    Gs 0 MW;
+    Bs 0 MVAr;
+    area 1;
+    Vm 1 pu.kV;
+    Va 0 deg;
+    baseKV 345 kV;
+    zone 1;
+    Vmax 1.1 pu.kV;
+    Vmin 0.9 pu.kV;
+}
+object pypower.bus
+{
+    name "pp_bus_30";
+    bus_i 30;
+    type PV;
+    Pd 0 MW;
+    Qd 0 MVAr;
+    Gs 0 MW;
+    Bs 0 MVAr;
+    area 1;
+    Vm 1 pu.kV;
+    Va 0 deg;
+    baseKV 345 kV;
+    zone 1;
+    Vmax 1.1 pu.kV;
+    Vmin 0.9 pu.kV;
+}
+object pypower.bus
+{
+    name "pp_bus_4";
+    bus_i 4;
+    type PQ;
+    Pd 0 MW;
+    Qd 0 MVAr;
+    Gs 0 MW;
+    Bs 0 MVAr;
+    area 1;
+    Vm 1 pu.kV;
+    Va 0 deg;
+    baseKV 345 kV;
+    zone 1;
+    Vmax 1.1 pu.kV;
+    Vmin 0.9 pu.kV;
+}
+object pypower.bus
+{
+    name "pp_bus_5";
+    bus_i 5;
+    type PQ;
+    Pd 90 MW;
+    Qd 30 MVAr;
+    Gs 0 MW;
+    Bs 0 MVAr;
+    area 1;
+    Vm 1 pu.kV;
+    Va 0 deg;
+    baseKV 345 kV;
+    zone 1;
+    Vmax 1.1 pu.kV;
+    Vmin 0.9 pu.kV;
+}
+object pypower.bus
+{
+    name "pp_bus_6";
+    bus_i 6;
+    type PQ;
+    Pd 0 MW;
+    Qd 0 MVAr;
+    Gs 0 MW;
+    Bs 0 MVAr;
+    area 1;
+    Vm 1 pu.kV;
+    Va 0 deg;
+    baseKV 345 kV;
+    zone 1;
+    Vmax 1.1 pu.kV;
+    Vmin 0.9 pu.kV;
+}
+object pypower.bus
+{
+    name "pp_bus_7";
+    bus_i 7;
+    type PQ;
+    Pd 100 MW;
+    Qd 35 MVAr;
+    Gs 0 MW;
+    Bs 0 MVAr;
+    area 1;
+    Vm 1 pu.kV;
+    Va 0 deg;
+    baseKV 345 kV;
+    zone 1;
+    Vmax 1.1 pu.kV;
+    Vmin 0.9 pu.kV;
+}
+object pypower.bus
+{
+    name "pp_bus_8";
+    bus_i 8;
+    type PQ;
+    Pd 0 MW;
+    Qd 0 MVAr;
+    Gs 0 MW;
+    Bs 0 MVAr;
+    area 1;
+    Vm 1 pu.kV;
+    Va 0 deg;
+    baseKV 345 kV;
+    zone 1;
+    Vmax 1.1 pu.kV;
+    Vmin 0.9 pu.kV;
+}
+object pypower.bus
+{
+    name "pp_bus_9";
+    bus_i 9;
+    type PQ;
+    Pd 125 MW;
+    Qd 50 MVAr;
+    Gs 0 MW;
+    Bs 0 MVAr;
+    area 1;
+    Vm 1 pu.kV;
+    Va 0 deg;
+    baseKV 345 kV;
+    zone 1;
+    Vmax 1.1 pu.kV;
+    Vmin 0.9 pu.kV;
+}
+
+//
+// gen
+//
+object pypower.gen
+{
+    name "pp_gen_1";
+    parent "pp_bus_1";
+    bus 1;
+    Pg 0 MW;
+    Qg 0 MVAr;
+    Qmax 300 MVAr;
+    Qmin -300 MVAr;
+    Vg 1 pu.kV;
+    mBase 100 MVA;
+    status IN_SERVICE;
+    Pmax 250 MW;
+    Pmin 90 MW;
+    Pc1 0 MW;
+    Pc2 0 MW;
+    Qc1min 0 MVAr;
+    Qc1max 0 MVAr;
+    Qc2min 0 MVAr;
+    Qc2max 0 MVAr;
+    ramp_agc 0 MW/min;
+    ramp_10 0 MW;
+    ramp_30 0 MW;
+    ramp_q 0 MVAr/min;
+    apf 0 pu;
+}
+object pypower.gen
+{
+    name "pp_gen_2";
+    parent "pp_bus_2";
+    bus 2;
+    Pg 163 MW;
+    Qg 0 MVAr;
+    Qmax 300 MVAr;
+    Qmin -300 MVAr;
+    Vg 1 pu.kV;
+    mBase 100 MVA;
+    status IN_SERVICE;
+    Pmax 300 MW;
+    Pmin 10 MW;
+    Pc1 0 MW;
+    Pc2 200 MW;
+    Qc1min -20 MVAr;
+    Qc1max 20 MVAr;
+    Qc2min -10 MVAr;
+    Qc2max 10 MVAr;
+    ramp_agc 0 MW/min;
+    ramp_10 0 MW;
+    ramp_30 0 MW;
+    ramp_q 0 MVAr/min;
+    apf 0 pu;
+}
+object pypower.gen
+{
+    name "pp_gen_3";
+    parent "pp_bus_30";
+    bus 30;
+    Pg 85 MW;
+    Qg 0 MVAr;
+    Qmax 300 MVAr;
+    Qmin -300 MVAr;
+    Vg 1 pu.kV;
+    mBase 100 MVA;
+    status IN_SERVICE;
+    Pmax 270 MW;
+    Pmin 10 MW;
+    Pc1 0 MW;
+    Pc2 200 MW;
+    Qc1min -30 MVAr;
+    Qc1max 30 MVAr;
+    Qc2min -15 MVAr;
+    Qc2max 15 MVAr;
+    ramp_agc 0 MW/min;
+    ramp_10 0 MW;
+    ramp_30 0 MW;
+    ramp_q 0 MVAr/min;
+    apf 0 pu;
+}
+
+//
+// branch
+//
+object pypower.branch
+{
+    name "pp_branch_1";
+    from "pp_bus_1";
+    to "pp_bus_4";
+    fbus 1;
+    tbus 4;
+    r 0 pu.Ohm;
+    x 0.0576 pu.Ohm;
+    b 0 pu.S;
+    rateA 0 MVA;
+    rateB 250 MVA;
+    rateC 250 MVA;
+    ratio 0 pu;
+    angle 0 deg;
+    status IN;
+    angmin -360 deg;
+    angmax 2.48 deg;
+}
+object pypower.branch
+{
+    name "pp_branch_2";
+    from "pp_bus_4";
+    to "pp_bus_5";
+    fbus 4;
+    tbus 5;
+    r 0.017 pu.Ohm;
+    x 0.092 pu.Ohm;
+    b 0.158 pu.S;
+    rateA 0 MVA;
+    rateB 250 MVA;
+    rateC 250 MVA;
+    ratio 0 pu;
+    angle 0 deg;
+    status IN;
+    angmin -360 deg;
+    angmax 360 deg;
+}
+object pypower.branch
+{
+    name "pp_branch_3";
+    from "pp_bus_5";
+    to "pp_bus_6";
+    fbus 5;
+    tbus 6;
+    r 0.039 pu.Ohm;
+    x 0.17 pu.Ohm;
+    b 0.358 pu.S;
+    rateA 150 MVA;
+    rateB 150 MVA;
+    rateC 150 MVA;
+    ratio 0 pu;
+    angle 0 deg;
+    status IN;
+    angmin -360 deg;
+    angmax 360 deg;
+}
+object pypower.branch
+{
+    name "pp_branch_4";
+    from "pp_bus_30";
+    to "pp_bus_6";
+    fbus 30;
+    tbus 6;
+    r 0 pu.Ohm;
+    x 0.0586 pu.Ohm;
+    b 0 pu.S;
+    rateA 0 MVA;
+    rateB 300 MVA;
+    rateC 300 MVA;
+    ratio 0 pu;
+    angle 0 deg;
+    status IN;
+    angmin -360 deg;
+    angmax 360 deg;
+}
+object pypower.branch
+{
+    name "pp_branch_5";
+    from "pp_bus_6";
+    to "pp_bus_7";
+    fbus 6;
+    tbus 7;
+    r 0.0119 pu.Ohm;
+    x 0.1008 pu.Ohm;
+    b 0.209 pu.S;
+    rateA 40 MVA;
+    rateB 150 MVA;
+    rateC 150 MVA;
+    ratio 0 pu;
+    angle 0 deg;
+    status IN;
+    angmin -360 deg;
+    angmax 360 deg;
+}
+object pypower.branch
+{
+    name "pp_branch_6";
+    from "pp_bus_7";
+    to "pp_bus_8";
+    fbus 7;
+    tbus 8;
+    r 0.0085 pu.Ohm;
+    x 0.072 pu.Ohm;
+    b 0.149 pu.S;
+    rateA 250 MVA;
+    rateB 250 MVA;
+    rateC 250 MVA;
+    ratio 0 pu;
+    angle 0 deg;
+    status IN;
+    angmin -360 deg;
+    angmax 360 deg;
+}
+object pypower.branch
+{
+    name "pp_branch_7";
+    from "pp_bus_8";
+    to "pp_bus_2";
+    fbus 8;
+    tbus 2;
+    r 0 pu.Ohm;
+    x 0.0625 pu.Ohm;
+    b 0 pu.S;
+    rateA 250 MVA;
+    rateB 250 MVA;
+    rateC 250 MVA;
+    ratio 0 pu;
+    angle 0 deg;
+    status IN;
+    angmin -360 deg;
+    angmax 360 deg;
+}
+object pypower.branch
+{
+    name "pp_branch_8";
+    from "pp_bus_8";
+    to "pp_bus_9";
+    fbus 8;
+    tbus 9;
+    r 0.032 pu.Ohm;
+    x 0.161 pu.Ohm;
+    b 0.306 pu.S;
+    rateA 250 MVA;
+    rateB 250 MVA;
+    rateC 250 MVA;
+    ratio 0 pu;
+    angle 0 deg;
+    status IN;
+    angmin -360 deg;
+    angmax 360 deg;
+}
+object pypower.branch
+{
+    name "pp_branch_9";
+    from "pp_bus_9";
+    to "pp_bus_4";
+    fbus 9;
+    tbus 4;
+    r 0.01 pu.Ohm;
+    x 0.085 pu.Ohm;
+    b 0.176 pu.S;
+    rateA 250 MVA;
+    rateB 250 MVA;
+    rateC 250 MVA;
+    ratio 0 pu;
+    angle 0 deg;
+    status IN;
+    angmin -2 deg;
+    angmax 360 deg;
+}
+
+//
+// gencost
+//
+object pypower.gencost
+{
+    name "pp_gencost_1";
+    parent "pp_gen_1";
+    model PIECEWISE;
+    startup 0 $;
+    shutdown 0 $;
+    costs "0,0,100,2500,200,5500,250,7250";
+}
+object pypower.gencost
+{
+    name "pp_gencost_2";
+    parent "pp_gen_2";
+    model POLYNOMIAL;
+    startup 0 $;
+    shutdown 0 $;
+    costs "24.035,-403.5";
+}
+object pypower.gencost
+{
+    name "pp_gencost_3";
+    parent "pp_gen_3";
+    model PIECEWISE;
+    startup 0 $;
+    shutdown 0 $;
+    costs "0,0,200,3000,300,5000";
+}
+
+//
+// dcline
+//
+object pypower.dcline
+{
+    name "pp_dcline_1";
+    from "pp_bus_30";
+    to "pp_bus_4";
+    status IN;
+    Sfrom 10+8.9j MVA;
+    Sto 0+0j MVA;
+    Vfrom 1.01 pu.V;
+    Vto 1 pu.V;
+    Pmin 1 MW;
+    Pmax 10 MW;
+    Qminf -10 MVAr;
+    Qmaxf 10 MVAr;
+    Qmint -10 MVAr;
+    Qmaxt 10 MVAr;
+    loss0 1 MW;
+    loss1 0.01 MW/MW;
+}
+object pypower.dcline
+{
+    name "pp_dcline_2";
+    from "pp_bus_7";
+    to "pp_bus_9";
+    status IN;
+    Sfrom 2+1.96j MVA;
+    Sto 0+0j MVA;
+    Vfrom 1 pu.V;
+    Vto 1 pu.V;
+    Pmin 2 MW;
+    Pmax 10 MW;
+    Qminf 0 MVAr;
+    Qmaxf 0 MVAr;
+    Qmint 0 MVAr;
+    Qmaxt 0 MVAr;
+    loss0 0 MW;
+    loss1 0 MW/MW;
+}
+object pypower.dcline
+{
+    name "pp_dcline_3";
+    from "pp_bus_5";
+    to "pp_bus_8";
+    status OUT;
+    Sfrom 0+0j MVA;
+    Sto 0+0j MVA;
+    Vfrom 1 pu.V;
+    Vto 1 pu.V;
+    Pmin 1 MW;
+    Pmax 10 MW;
+    Qminf -10 MVAr;
+    Qmaxf 10 MVAr;
+    Qmint -10 MVAr;
+    Qmaxt 10 MVAr;
+    loss0 0 MW;
+    loss1 0 MW/MW;
+}
+object pypower.dcline
+{
+    name "pp_dcline_4";
+    from "pp_bus_5";
+    to "pp_bus_9";
+    status IN;
+    Sfrom 10+9.5j MVA;
+    Sto 0+0j MVA;
+    Vfrom 1 pu.V;
+    Vto 0.98 pu.V;
+    Pmin 0 MW;
+    Pmax 10 MW;
+    Qminf -10 MVAr;
+    Qmaxf 10 MVAr;
+    Qmint -10 MVAr;
+    Qmaxt 10 MVAr;
+    loss0 0 MW;
+    loss1 0.05 MW/MW;
+}
+
+//
+// dclinecost (module pypower has no DC line cost class; same properties as pypower.gencost)
+//
+class dclinecost
+{
+    enumeration {UNKNOWN=0,PIECEWISE=1,POLYNOMIAL=2} model;
+    double startup[$];
+    double shutdown[$];
+    char1024 costs;
+}
+object dclinecost
+{
+    name "pp_dclinecost_1";
+    parent "pp_dcline_1";
+    model POLYNOMIAL;
+    startup 0 $;
+    shutdown 0 $;
+    costs "0,0";
+}
+object dclinecost
+{
+    name "pp_dclinecost_2";
+    parent "pp_dcline_2";
+    model POLYNOMIAL;
+    startup 0 $;
+    shutdown 0 $;
+    costs "0,0";
+}
+object dclinecost
+{
+    name "pp_dclinecost_3";
+    parent "pp_dcline_3";
+    model POLYNOMIAL;
+    startup 0 $;
+    shutdown 0 $;
+    costs "0,0";
+}
+object dclinecost
+{
+    name "pp_dclinecost_4";
+    parent "pp_dcline_4";
+    model POLYNOMIAL;
+    startup 0 $;
+    shutdown 0 $;
+    costs "7.3,0";
+}
+
+// 1 areas row(s) not written: module pypower has no area objects (bus area numbers are kept; reading this file rebuilds the rows with default price reference buses and no names)
+
+// 1 time series (load: 24 steps, 6 columns) not written: save as .py or .json to keep them
