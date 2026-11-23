@@ -540,6 +540,11 @@ dialog.server-down .actions { display: flex; gap: 8px; justify-content: flex-end
 .series-format { margin: 8px 14px; max-width: 900px; }
 .series-table td { padding: 3px 8px; text-align: right; font-family: var(--mono); font-size: 12px; white-space: nowrap; }
 .series-table td.rowhead { padding: 0 8px; }
+.series-table tr.current td { background: var(--sel); }
+.series-step { gap: 4px; }
+.series-step button.arrow { min-width: 30px; padding: 3px 6px; }
+.series-step input.num { width: 7em; }
+.series-step .step-label { color: var(--muted); font-size: 12px; margin: 0 6px; }
 .step-picker { display: flex; gap: 6px; align-items: center; margin-bottom: 10px; }
 .step-picker .hint { margin-left: 4px; }
 .res-block td.current { background: var(--sel); }

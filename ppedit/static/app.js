@@ -17,6 +17,7 @@ const S = {
   claude: null,        // Claude sessions from /api/claude
   step: 0,             // step of a multistep solution shown (issue #124, stepView)
   seriesName: null,    // series shown on the Multistep tab ("" = all combined; currentSeries)
+  seriesStep: { on: false, step: 0 }, // step chosen on the Multistep tab (renderSeriesStep; combined steps from 0)
   issueOpen: null,     // message of the solver warning whose detail is open (Issues tab)
   pos: {},             // bus_i -> {x, y}
   zoom: { k: 1, x: 0, y: 0 },
@@ -547,8 +548,74 @@ function currentSeries() {
     S.seriesName = all.length ? all[0].name : null;
   return all.find(x => x.name === S.seriesName) || null;
 }
+// Step controls of the Multistep tab: the Step check box turns choosing a step
+// on; the step is picked with a date/time input when every combined label is
+// a date and time (else a step number spinner) or the arrows (first, -24, -1,
+// +1, +24, last). Copy to case copies all series values of the step into the
+// case (POST /api/series/apply, Case.apply_step; undoable).
+const STEP_TIME = /^(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d)/;
+function stepTimes(comb) {
+  const keys = comb.aligned === "step" ? [] : comb.index.map(x => { const m = STEP_TIME.exec(String(x)); return m ? `${m[1]}T${m[2]}` : null; });
+  return keys.length && keys.every(x => x) ? keys : null;
+}
+// the row of series `ser` that is the chosen combined step (-1: none)
+function seriesStepRow(ser) {
+  const comb = S.state.case.series_combined, st = S.seriesStep;
+  if (!st.on || !comb || comb.error) return -1;
+  if (S.state.case.series.length < 2) return st.step;
+  const label = comb.index[st.step];
+  return comb.aligned === "time" ? ser.index.findIndex(x => String(x) === String(label)) : st.step;
+}
+function setSeriesStep(step) {
+  const comb = S.state.case.series_combined;
+  S.seriesStep.step = Math.max(0, Math.min(comb.steps - 1, step));
+  renderSeries();
+  const row = document.querySelector("#series-body tr.current");
+  if (row) row.scrollIntoView({ block: "nearest" });
+}
+function renderSeriesStep() {
+  const box = $("#series-step"), comb = S.state.case.series_combined, st = S.seriesStep;
+  box.hidden = !comb || !!comb.error;
+  if (box.hidden) return box.replaceChildren();
+  if (st.step >= comb.steps) st.step = comb.steps - 1;
+  const off = !st.on, times = stepTimes(comb), last = comb.steps - 1;
+  let input;
+  if (times) {
+    input = h("input", { type: "datetime-local", value: times[st.step], min: times[0], max: times[last], step: Math.max(60, Math.round(comb.delta * 3600)),
+      disabled: off, "aria-label": "Step date and time", onchange: e => {
+        const v = e.target.value, at = times.indexOf(v);
+        if (at >= 0) return setSeriesStep(at);
+        // no step at that time: the nearest one
+        const t = Date.parse(v);
+        if (!Number.isNaN(t)) setSeriesStep(times.reduce((b, x, i) => Math.abs(Date.parse(x) - t) < Math.abs(Date.parse(times[b]) - t) ? i : b, 0));
+        else e.target.value = times[st.step];
+      } });
+  } else {
+    input = h("input", { type: "number", class: "num", value: st.step + 1, min: 1, max: comb.steps, step: 1, disabled: off,
+      "aria-label": "Step number", onchange: e => {
+        const n = Math.round(Number(e.target.value));
+        if (Number.isFinite(n)) setSeriesStep(n - 1); else e.target.value = st.step + 1;
+      } });
+  }
+  const arrow = (text, title, to) => h("button", { class: "arrow", title, disabled: off || to === st.step, onclick: () => setSeriesStep(to) }, text);
+  box.replaceChildren(
+    h("label", { class: "inline", title: "Choose a step of the series to copy into the case" },
+      h("input", { type: "checkbox", checked: st.on, "aria-label": "Choose a step", onchange: e => { st.on = e.target.checked; renderSeries(); } }), " Step"),
+    input,
+    arrow("⏮", "First step", 0), arrow("≪", "24 steps back", Math.max(0, st.step - 24)), arrow("‹", "Previous step", Math.max(0, st.step - 1)),
+    arrow("›", "Next step", Math.min(last, st.step + 1)), arrow("≫", "24 steps forward", Math.min(last, st.step + 24)), arrow("⏭", "Last step", last),
+    h("span", { class: "step-label" }, off ? `${comb.steps} step(s)` : `step ${st.step + 1} of ${comb.steps}: ${comb.index[st.step]}`),
+    h("button", { disabled: off, title: "Copy every series value of this step (all series combined) into the case tables (Ctrl+Z to undo)",
+      onclick: () => copyStepToCase().catch(() => { /* toast already shown */ }) }, "Copy to case"));
+}
+async function copyStepToCase() {
+  const st = await act("/api/series/apply", { step: S.seriesStep.step });
+  const a = st.applied;
+  toast(`Copied step ${a.step + 1} (${a.label}) to the case: ${a.changed} value(s) changed (Ctrl+Z to undo)`);
+}
 function renderSeries() {
   const all = S.state.case.series, comb = S.state.case.series_combined, exts = S.meta.table_formats || [];
+  renderSeriesStep();
   const ser = currentSeries();
   const pick = $("#series-pick");
   pick.replaceChildren(...all.map(x => h("option", { value: x.name, selected: x === ser }, `${x.name} (${x.values.length})`)),
@@ -588,7 +655,8 @@ function renderSeries() {
         h("td", {}, x.timed ? "yes" : "no"), h("td", {}, x.index[0]), h("td", {}, x.index[x.index.length - 1]), h("td", {}, x.delta)))))));
     return;
   }
-  const rows = ser.values.slice(0, SERIES_SHOW).map((v, t) => h("tr", {}, h("td", { class: "rowhead" }, t + 1),
+  const cur = seriesStepRow(ser);
+  const rows = ser.values.slice(0, SERIES_SHOW).map((v, t) => h("tr", t === cur ? { class: "current" } : {}, h("td", { class: "rowhead" }, t + 1),
     h("td", {}, ser.index[t]), ...v.map(x => h("td", { class: "num" }, fmt(x, S.precision.MW ?? 6)))));
   $("#series-body").replaceChildren(format, h("div", { class: "table-wrap" }, h("table", { class: "series-table" },
     h("thead", {}, h("tr", {}, h("th", { class: "rowhead" }, "#"), h("th", {}, "time"),

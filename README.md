@@ -262,7 +262,13 @@ In the editor:
     and the tab says why when they cannot be combined. The
     multistep builder options (temporal assembly, branch limits, loss
     weight and others, each for the network models it applies to) are on
-    the Settings tab under *CVXOPF multistep options*. Each series is read with **Import…** from a data file (same formats as the
+    the Settings tab under *CVXOPF multistep options*. To put the values
+    of one step into the case, check **Step** in the row under the
+    toolbar, choose the step with its date and time (or its number when
+    the steps have no time labels) or the arrows (first, 24 back, 1 back,
+    1 forward, 24 forward, last), and click **Copy to case**: every series
+    value of that step (all series combined) replaces the case value, as
+    one edit that Ctrl+Z undoes; the series stays. Each series is read with **Import…** from a data file (same formats as the
     tables) with one row per time step: an optional label column (`time`,
     `timestamp`, `date`, `step` or `index`) and one column per value,
     named `bus.Pd.N` or `bus.Qd.N` (bus number `N`), `gen.Pmin.N` or
