@@ -348,8 +348,13 @@ API key to start sessions; tests use a fake client).
   stays out of the way if CVXPY ever defines one). The child's verbose
   solver output reaches the log only when it finishes. Tests swap the
   child code (`_solveproc._CHILD`) for a stand-in to stop or kill it.
-  `watchSolve` in `app.js` polls `/api/solve/progress` with `background`
-  and sets `busy.detail`/`busy.stop`.
+  `followSolve` in `app.js` polls `/api/solve/progress` with `background`
+  and sets `busy.detail`/`busy.stop`. The page's solves are background
+  solves (`runSolve`, `background: true`; `start_background_solve` in
+  `server.py` solves a deep copy in a thread without `editor.lock` and
+  keeps the result only if `editor.revision` is unchanged); one solve at a
+  time (`SolveBusy`, HTTP 409). Requests without `background` still hold
+  the lock (tests, API, `?solve=`, Agent tab).
 
 - Agent tab (formerly Claude, issue #133; view `agent`, `?view=claude` still
   accepted; `ppedit/claude.py`, `renderClaude` in `app.js`): sessions
