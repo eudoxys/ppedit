@@ -255,7 +255,7 @@ API key to start sessions; tests use a fake client).
   test fixtures) stays open. `serverCommand()` in `app.js` adds `--token`
   from `/api/meta`, and `ping()` reports a 403 as `{forbidden: true}`.
 
-- Displayed name (issue #135): `ppedit/branding.py` (`APP_NAME`,
+- Displayed name (issue #135): `ppedit/_branding.py` (`APP_NAME`,
   `APP_MARK`); `app_page` in `server.py` fills `{{APP_NAME}}`/`{{APP_BRAND}}`
   in `index.html`, and `APP_NAME` in `app.js` (from `<meta name="app-name">`)
   is used for every name the page shows. Use it for new user-facing text;

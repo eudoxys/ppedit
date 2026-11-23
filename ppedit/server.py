@@ -39,7 +39,7 @@ open case was read, see `ppedit.Case.source`, or `null`), and `loads_off`
     `table_read_formats`: those and the other pandas formats
     `POST /api/table/import` and `POST /api/series/import` read, see
     `ppedit._tableio`),
-    `app_name` (the name the page shows, `ppedit.branding.APP_NAME`),
+    `app_name` (the name the page shows, `ppedit._branding.APP_NAME`),
     solvers (`ppedit.case.solvers`: the PF algorithms,
     the installed OPF solvers and the cvxopf solve option choices), version,
     `about` (package metadata shown when the page's "ppedit" title is
@@ -214,7 +214,7 @@ from flask import Flask, jsonify, request, send_from_directory, Response, redire
 
 from ppedit.case import Case, CaseError, COLUMNS, RESULT_COLUMNS, TABLES, FORMATS, INPUT_FORMATS, \
     builtin_cases, solvers, writable_format
-from ppedit import branding
+from ppedit import _branding as branding
 from ppedit.claude import Sessions
 from ppedit._solveproc import SolveJob, describe
 from ppedit._tableio import table_formats, table_read_formats, read_rows, dump_rows, \
@@ -292,7 +292,7 @@ def _source_text(dists,*names) -> str:
     return ""
 
 def app_page(html:str) -> str:
-    """Put the editor name of `ppedit.branding` into the page `html`
+    """Put the editor name of `ppedit._branding` into the page `html`
 
     `{{APP_NAME}}` becomes `branding.APP_NAME` and `{{APP_BRAND}}` the
     top-bar title, `APP_MARK` in the accent color (HTML escaped)."""

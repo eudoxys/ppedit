@@ -51,7 +51,7 @@ def test_app_name_default(client):
 
 def test_app_name_changed(client,monkeypatch):
     """branding.APP_NAME and APP_MARK change every name the page shows (issue #135)"""
-    from ppedit import branding # pylint: disable=import-outside-toplevel
+    from ppedit import _branding as branding # pylint: disable=import-outside-toplevel
     monkeypatch.setattr(branding,"APP_NAME","Grid <Edit>")
     monkeypatch.setattr(branding,"APP_MARK","Grid")
     page = client.get("/").get_data(as_text=True)
