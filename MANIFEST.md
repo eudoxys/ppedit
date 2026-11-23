@@ -50,7 +50,7 @@ Update this file in the same PR that adds, moves, or deletes a file.
 | `ppedit/_tableio.py` | table and time series data import/export with pandas (`read_rows`, `dump_rows`, `read_series`, `dump_series`, `table_formats`) | private; tested by `_test/test_tableio.py` |
 | `ppedit/_dcline.py` | DC line model for the PYPOWER solver (`userfcn` callbacks, as `pypower.toggle_dcline`) | private; tested by `_test/test_dcline.py` |
 | `ppedit/claude.py` | `Sessions`: Claude API conversations with tools that edit the case, web and local data sources | tested by `_test/test_claude.py` with a fake client |
-| `ppedit/branding.py` | `APP_NAME` and `APP_MARK`: the editor name the browser page shows (default `ppedit`, issue #135) | small; edit to rename the page |
+| `ppedit/_branding.py` | `APP_NAME` and `APP_MARK`: the editor name the browser page shows (default `ppedit`, issue #135) | small; edit to rename the page |
 | `ppedit/server.py` | `create_app()`, `Editor` (undo/redo), JSON API, `about()` package metadata | tested by `_test/test_server.py` |
 | `ppedit/static/index.html` | editor page layout | |
 | `ppedit/static/style.css` | editor styles | |

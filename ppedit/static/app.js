@@ -1,5 +1,5 @@
 // ppedit browser editor
-// APP_NAME: the editor name shown in the page (ppedit/branding.py; the server
+// APP_NAME: the editor name shown in the page (ppedit/_branding.py; the server
 // puts it in <meta name="app-name">), used for every displayed "ppedit".
 const APP_NAME = document.querySelector('meta[name="app-name"]')?.content || "ppedit";
 "use strict";

@@ -1,4 +1,4 @@
-"""Name of the editor shown in the browser page
+"""@private Name of the editor shown in the browser page
 
 Change `APP_NAME` to show another name wherever the page shows `ppedit`:
 the window title, the top-bar title, tooltips, server status dialogs and
@@ -19,7 +19,7 @@ Example:
 """
 
 APP_NAME = "ppedit"
-"""Name of the editor shown in the browser page"""
+"""@private Name of the editor shown in the browser page"""
 
 APP_MARK = "pp"
 """Leading part of `APP_NAME` drawn in the accent color in the top bar"""

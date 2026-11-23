@@ -441,7 +441,7 @@ the Coverage badge above.
 
 The browser page shows the name `ppedit` in the window title, the top-bar
 title, tooltips, server status dialogs and messages, and the About dialog
-heading. To show another name, edit `ppedit/branding.py`:
+heading. To show another name, edit `ppedit/_branding.py`:
 
 ```python
 APP_NAME = "GridEdit"   # the name shown in the page (default "ppedit")
