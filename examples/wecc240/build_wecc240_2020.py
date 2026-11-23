@@ -1,12 +1,12 @@
 """Load the storage table and time series of the WECC 240 2020 case
 
-Syntax: python3 examples/build_wecc240_2020.py [CASE] [--check]
+Syntax: python3 examples/wecc240/build_wecc240_2020.py [CASE] [--check]
 
 First writes `wecc240_2020_reactive_load.csv` from
 `wecc240_2020_real_load.csv` at the power factor of each bus in the case
 bus table: `Qd(t) = Pd(t) * Qd / Pd` (0 where the case `Pd` is 0), rounded
 to 4 decimals like the real load. Then rebuilds, in `CASE` (default
-`examples/wecc240_2020.py`), the data that comes from the other `examples/`
+`examples/wecc240/wecc240_2020.py`), the data that comes from the other `examples/wecc240/`
 files, and saves the case in place:
 
   1. `storage`: the rows of `wecc240_storage.csv` (replacing any); each
@@ -36,7 +36,7 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0,os.path.dirname(HERE))
+sys.path.insert(0,os.path.dirname(os.path.dirname(HERE)))
 from ppedit import Case # pylint: disable=wrong-import-position
 from ppedit._tableio import read_series # pylint: disable=wrong-import-position
 
@@ -48,7 +48,7 @@ SERIES = [
 PANEL = ("generation","wecc240_generation.csv.gz","gen","Pmax")
 
 def _read(name):
-    """Return the step labels, columns and rows of a series file in `examples/`"""
+    """Return the step labels, columns and rows of a series file in `examples/wecc240/`"""
     with open(os.path.join(HERE,name),"rb") as fh:
         return read_series(name,fh.read())
 

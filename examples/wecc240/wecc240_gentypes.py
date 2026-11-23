@@ -1,13 +1,13 @@
 """Derive WECC 240 generator type cost curves from NREL's scheduling data
 
-Syntax: python3 examples/wecc240_gentypes.py XLSX [CSV]
+Syntax: python3 examples/wecc240/wecc240_gentypes.py XLSX [CSV]
 
   - `XLSX`: NREL's `WECC240_2018_Generation_scheduling.xlsx` (in
     https://github.com/eudoxys/wecc240, `wecc240/data/`)
   - `CSV`: generator type table to rewrite (default
-    `examples/wecc240_gentypes.csv`, columns `type,c2,c1,c0`)
+    `examples/wecc240/wecc240_gentypes.csv`, columns `type,c2,c1,c0`)
 
-The PSS/E generator ID of each unit in `examples/wecc240_case.raw` is its
+The PSS/E generator ID of each unit in `examples/wecc240/wecc240_case.raw` is its
 type (`C`, `G`, `NG`, ...). NREL's `Generator` sheet names the same units
 `<bus><ID>` (e.g. `1032G`) and gives each a `Gen_Type`, a start-up and a
 no-load cost, and a marginal cost curve of up to four segments (`CostN`
@@ -68,7 +68,7 @@ def main(argv):
         print(__doc__.split("\n\n",2)[1],file=sys.stderr)
         return 1
     xlsx = argv[0]
-    path = argv[1] if len(argv) > 1 else "examples/wecc240_gentypes.csv"
+    path = argv[1] if len(argv) > 1 else "examples/wecc240/wecc240_gentypes.csv"
     book = openpyxl.load_workbook(xlsx,read_only=True,data_only=True)
     rows = list(book["Generator"].iter_rows(values_only=True))
     units = [dict(zip(rows[0],r)) for r in rows[1:] if r[0] is not None]

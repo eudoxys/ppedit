@@ -1,9 +1,9 @@
 """Set the areas of a WECC 240 case to the EIA-930 balancing authorities
 
-Syntax: python3 examples/wecc240_areas.py [CASE]
+Syntax: python3 examples/wecc240/wecc240_areas.py [CASE]
 
-Puts each bus of `CASE` (default `examples/wecc240_2020.py`) in the area of
-its EIA Form 930 balancing authority code in `examples/wecc240_ba.csv` (one
+Puts each bus of `CASE` (default `examples/wecc240/wecc240_2020.py`) in the area of
+its EIA Form 930 balancing authority code in `examples/wecc240/wecc240_ba.csv` (one
 row per bus, `BUS_I,NAME,BA,NOTE`; the name is checked against the case
 geodata) and saves the case in place (issue #90). Areas are numbered 1, 2,
 ... in alphabetical order of the codes present, the `areas` rows are rebuilt
@@ -18,7 +18,7 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0,os.path.dirname(HERE))
+sys.path.insert(0,os.path.dirname(os.path.dirname(HERE)))
 from ppedit import Case # pylint: disable=wrong-import-position
 
 

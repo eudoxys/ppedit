@@ -23,8 +23,8 @@ Update this file in the same PR that adds, moves, or deletes a file.
 - Change time series or multistep OPF: `Case.set_series`/`set_series_panel`/`series_values`/`at_step`/`_series_input` and `Case.solve` in `ppedit/case.py`; `runopf(series=...)` in `ppedit/_cvxopf.py`; `read_series`/`dump_series` in `ppedit/_tableio.py`; `/api/series*` in `ppedit/server.py`; `renderSeries`, `stepView` in `ppedit/static/app.js`; `ppedit/_test/test_series.py`
 - Change storage: `COLUMNS["storage"]`, the edit methods, `_dump_glm_storage` and `_series_input` in `ppedit/case.py`; `_storage_constraints` and related helpers in `ppedit/_cvxopf.py`; `storageBlock` in `ppedit/static/app.js`; `ppedit/_test/test_storage.py`
 - Change DC line handling: `COLUMNS["dcline"]`, `COST_TABLES` and `Case.solve` in `ppedit/case.py`; solver callbacks in `ppedit/_dcline.py`; `ppedit/_test/test_dcline.py`
-- Change WECC 240 2020 areas (EIA-930 balancing authorities): `examples/wecc240_ba.csv`, then `python3 examples/wecc240_areas.py`; see `examples/README.md`
-- Change WECC 240 generator costs: `examples/wecc240_gentypes.csv` (or rederive it with `examples/wecc240_gentypes.py`), then `python3 examples/build_wecc240_2018.py`; see `examples/README.md`
+- Change WECC 240 2020 areas (EIA-930 balancing authorities): `examples/wecc240/wecc240_ba.csv`, then `python3 examples/wecc240/wecc240_areas.py`; see `examples/wecc240/README.md`
+- Change WECC 240 generator costs: `examples/wecc240/wecc240_gentypes.csv` (or rederive it with `examples/wecc240/wecc240_gentypes.py`), then `python3 examples/wecc240/build_wecc240_2018.py`; see `examples/README.md`
 - Change PSS/E `.raw` input: `ppedit/_psse.py` (conversion), `INPUT_FORMATS`/`Case.load` in `ppedit/case.py`; `ppedit/_test/test_psse.py` and `ppedit/_test/data/psse_v*.raw`
 - Change table data import/export: `ppedit/_tableio.py` (file formats), `Case.import_rows` in `ppedit/case.py`, `/api/table/*` in `ppedit/server.py`; `importRows`/`exportRows` in `ppedit/static/app.js`; `ppedit/_test/test_tableio.py`
 - Change solve progress or the Stop button: `ppedit/_solveproc.py`; `_ipopt_progress` and `progress` of `runopf` in `ppedit/_cvxopf.py`; `job` of `Case.solve`; `/api/solve/progress`, `/api/solve/stop` in `ppedit/server.py`; `watchSolve`/`busyRefresh` in `ppedit/static/app.js`; `ppedit/_test/test_solveproc.py`
@@ -88,30 +88,32 @@ Update this file in the same PR that adds, moves, or deletes a file.
 | `examples/pypower/case9_dcline.py` | cvxopf's `case9_dcline` with a 24-step load series (`series` key) | imported from cvxopf; kept by the script; tested by `test_examples.py` |
 | `examples/pypower/LICENSE-cvxopf` | cvxopf BSD license | applies to `case9_dcline.py` |
 | `examples/pypower/case*.glm` | the same cases as `module pypower` GLM models | generated; don't edit; case300.glm ~250 kB, use `head` |
-| `examples/README.md` | provenance of the WECC 240 examples | |
-| `examples/wecc240_case.raw` | WECC 240-bus case as PSS/E revision 34 (see `examples/README.md`) | from NREL (see file header); ~220 kB, use `head`; tested by `_test/test_psse.py` |
-| `examples/wecc240_bus.csv` | WECC 240 bus index: row, PSS/E bus number, name, PYPOWER `bus_i` | from NREL |
-| `examples/wecc240_cost.csv` | per-generator cost rows (`id` = bus name + PSS/E ID; `model,startup,shutdown,cost`) | costs copied from `wecc240_gentypes.csv` by type |
-| `examples/wecc240_gentypes.csv` | polynomial costs (`c2,c1,c0`) by generator type (the PSS/E generator ID) | written by `wecc240_gentypes.py` |
-| `examples/wecc240_gentypes.py` | derives `wecc240_gentypes.csv` from NREL's WECC 240 scheduling workbook | maintenance script; needs `openpyxl` |
-| `examples/wecc240_2011.py` | the 2011 WECC 240-bus case (`wecc240_case.raw` converted by ppedit) with geodata; the Pacific DC Intertie and Intermountain HVDC lines as `dcline` rows (3.5% losses, zero `dclinecost`) | written by ppedit, DC lines edited (see `examples/README.md`); ~90 kB, use `head` |
-| `examples/wecc240_2018.py` | `wecc240_2011.py` with generator costs by type from `wecc240_gentypes.csv`, branch `rateA` from `rateB`/`rateC`, voltage fixes (`Vg` 1.08 pu at five generator buses, shunt reactors at eight buses) and `rateA` raised to a 20% margin on the 13 most loaded branches | written by `build_wecc240_2018.py`; don't edit; ~95 kB, use `head` |
-| `examples/build_wecc240_2018.py` | builds `wecc240_2018.py` from `wecc240_2011.py`, `wecc240_gentypes.csv`, `wecc240_cost.csv` (generator types) and `wecc240_bus.csv` | maintenance script |
-| `examples/wecc240_2020.py` | the 2020 WECC 240-bus case with geodata, storage (`wecc240_storage.csv`; its generators in service, `Pmax` = `Smax`) and the August 2020 series (loaded by `build_wecc240_2020.py`); areas are the EIA-930 balancing authorities (set by `wecc240_areas.py`) | written by ppedit, areas set by `wecc240_areas.py`; ~165 kB, use `head` |
-| `examples/wecc240_ba.csv` | EIA-930 balancing authority of each WECC 240 bus (`BUS_I,NAME,BA,NOTE`) | curated by hand (issue #90) |
-| `examples/wecc240_2020_real_load.csv` | series file of bus `Pd` by hour for August 2020 (`bus.Pd.N` columns), the `real_load` series of `wecc240_2020.py` | data; ~745 lines, use `head` |
-| `examples/wecc240_2020_reactive_load.csv` | series file of bus `Qd` by hour for August 2020 (`bus.Qd.N` columns), the `reactive_load` series of `wecc240_2020.py`: the real load at the case bus power factors | written by `build_wecc240_2020.py`; data; ~745 lines, use `head` |
-| `examples/wecc240_netload.csv.gz` | hourly net load by WECC 240 node geohash, 2018-2022 (113 node columns) | data; ~20 MB, don't read |
-| `examples/wecc240_generation.csv.gz` | hourly generator `Pmax` panel for 2020 for the `wecc240_2020.py` generator rows (columns are gen rows from 1; none for the storage generators; August is the case's `generation` series) | written by `build_wecc240_generation.py`; ~10 MB, don't read |
-| `examples/build_wecc240_2020.py` | writes `wecc240_2020_reactive_load.csv` from the real load at the case power factors, loads `wecc240_storage.csv` and the `real_load`, `reactive_load` and `generation` series into `wecc240_2020.py` and checks them (`--check`: checks only) | maintenance script; saves the case in place |
-| `examples/wecc240_storage.csv` | `storage` rows for the `wecc240_2020.py` generators with negative `Pmin` (43 rows: 40 batteries, 4 h; pumped hydro gen rows 3, 5, 6, 24 h; half full at start and end) | data; import into the storage table |
-| `examples/build_wecc240_generation.py` | builds `wecc240_generation.csv.gz` from the eudoxys/generation WECC 240 node files and the wecc240 county-node map | maintenance script; needs a checkout of `eudoxys/generation` `data/wecc` |
-| `examples/wecc240_areas.py` | sets the areas of a WECC 240 case (default `wecc240_2020.py`) from `wecc240_ba.csv`, in place | maintenance script |
-| `examples/wecc240_case.py` | WECC 240-bus case without geodata | written by ppedit; ~70 kB, use `head` |
-| `examples/wecc240_geodata.csv` | bus locations for the WECC 240-bus case (`BUS_I,LAT,LON` plus `GEOHASH,NAME,GEN,LOAD,BA,COUNTY`) | for `--geodata` or **Map ▸ Load CSV…** |
-| `examples/wecc240_map.py` | WECC 240-bus case with its `geodata` and `geotags` | written by ppedit; ~105 kB, use `head` |
-| `examples/wecc240_map.json` | the same case as JSON | written by ppedit; ~230 kB, use `head` |
-| `examples/wecc240_map.glm` | the same case as a `module pypower` GLM model (keeps bus latitude/longitude) | written by ppedit; ~380 kB, use `head` |
+| `examples/README.md` | summary of the example folders | |
+| `examples/ieee118/README.md` | the IEEE 118-bus example to come (TODO; from Bennet Meyers' IEEE PES GM 2027 paper) | placeholder |
+| `examples/wecc240/README.md` | provenance of the WECC 240 examples | |
+| `examples/wecc240/wecc240_case.raw` | WECC 240-bus case as PSS/E revision 34 (see `examples/wecc240/README.md`) | from NREL (see file header); ~220 kB, use `head`; tested by `_test/test_psse.py` |
+| `examples/wecc240/wecc240_bus.csv` | WECC 240 bus index: row, PSS/E bus number, name, PYPOWER `bus_i` | from NREL |
+| `examples/wecc240/wecc240_cost.csv` | per-generator cost rows (`id` = bus name + PSS/E ID; `model,startup,shutdown,cost`) | costs copied from `wecc240_gentypes.csv` by type |
+| `examples/wecc240/wecc240_gentypes.csv` | polynomial costs (`c2,c1,c0`) by generator type (the PSS/E generator ID) | written by `wecc240_gentypes.py` |
+| `examples/wecc240/wecc240_gentypes.py` | derives `wecc240_gentypes.csv` from NREL's WECC 240 scheduling workbook | maintenance script; needs `openpyxl` |
+| `examples/wecc240/wecc240_2011.py` | the 2011 WECC 240-bus case (`wecc240_case.raw` converted by ppedit) with geodata; the Pacific DC Intertie and Intermountain HVDC lines as `dcline` rows (3.5% losses, zero `dclinecost`) | written by ppedit, DC lines edited (see `examples/README.md`); ~90 kB, use `head` |
+| `examples/wecc240/wecc240_2018.py` | `wecc240_2011.py` with generator costs by type from `wecc240_gentypes.csv`, branch `rateA` from `rateB`/`rateC`, voltage fixes (`Vg` 1.08 pu at five generator buses, shunt reactors at eight buses) and `rateA` raised to a 20% margin on the 13 most loaded branches | written by `build_wecc240_2018.py`; don't edit; ~95 kB, use `head` |
+| `examples/wecc240/build_wecc240_2018.py` | builds `wecc240_2018.py` from `wecc240_2011.py`, `wecc240_gentypes.csv`, `wecc240_cost.csv` (generator types) and `wecc240_bus.csv` | maintenance script |
+| `examples/wecc240/wecc240_2020.py` | the 2020 WECC 240-bus case with geodata, storage (`wecc240_storage.csv`; its generators in service, `Pmax` = `Smax`) and the August 2020 series (loaded by `build_wecc240_2020.py`); areas are the EIA-930 balancing authorities (set by `wecc240_areas.py`) | written by ppedit, areas set by `wecc240_areas.py`; ~165 kB, use `head` |
+| `examples/wecc240/wecc240_ba.csv` | EIA-930 balancing authority of each WECC 240 bus (`BUS_I,NAME,BA,NOTE`) | curated by hand (issue #90) |
+| `examples/wecc240/wecc240_2020_real_load.csv` | series file of bus `Pd` by hour for August 2020 (`bus.Pd.N` columns), the `real_load` series of `wecc240_2020.py` | data; ~745 lines, use `head` |
+| `examples/wecc240/wecc240_2020_reactive_load.csv` | series file of bus `Qd` by hour for August 2020 (`bus.Qd.N` columns), the `reactive_load` series of `wecc240_2020.py`: the real load at the case bus power factors | written by `build_wecc240_2020.py`; data; ~745 lines, use `head` |
+| `examples/wecc240/wecc240_netload.csv.gz` | hourly net load by WECC 240 node geohash, 2018-2022 (113 node columns) | data; ~20 MB, don't read |
+| `examples/wecc240/wecc240_generation.csv.gz` | hourly generator `Pmax` panel for 2020 for the `wecc240_2020.py` generator rows (columns are gen rows from 1; none for the storage generators; August is the case's `generation` series) | written by `build_wecc240_generation.py`; ~10 MB, don't read |
+| `examples/wecc240/build_wecc240_2020.py` | writes `wecc240_2020_reactive_load.csv` from the real load at the case power factors, loads `wecc240_storage.csv` and the `real_load`, `reactive_load` and `generation` series into `wecc240_2020.py` and checks them (`--check`: checks only) | maintenance script; saves the case in place |
+| `examples/wecc240/wecc240_storage.csv` | `storage` rows for the `wecc240_2020.py` generators with negative `Pmin` (43 rows: 40 batteries, 4 h; pumped hydro gen rows 3, 5, 6, 24 h; half full at start and end) | data; import into the storage table |
+| `examples/wecc240/build_wecc240_generation.py` | builds `wecc240_generation.csv.gz` from the eudoxys/generation WECC 240 node files and the wecc240 county-node map | maintenance script; needs a checkout of `eudoxys/generation` `data/wecc` |
+| `examples/wecc240/wecc240_areas.py` | sets the areas of a WECC 240 case (default `wecc240_2020.py`) from `wecc240_ba.csv`, in place | maintenance script |
+| `examples/wecc240/wecc240_case.py` | WECC 240-bus case without geodata | written by ppedit; ~70 kB, use `head` |
+| `examples/wecc240/wecc240_geodata.csv` | bus locations for the WECC 240-bus case (`BUS_I,LAT,LON` plus `GEOHASH,NAME,GEN,LOAD,BA,COUNTY`) | for `--geodata` or **Map ▸ Load CSV…** |
+| `examples/wecc240/wecc240_map.py` | WECC 240-bus case with its `geodata` and `geotags` | written by ppedit; ~105 kB, use `head` |
+| `examples/wecc240/wecc240_map.json` | the same case as JSON | written by ppedit; ~230 kB, use `head` |
+| `examples/wecc240/wecc240_map.glm` | the same case as a `module pypower` GLM model (keeps bus latitude/longitude) | written by ppedit; ~380 kB, use `head` |
 
 ## Repository
 

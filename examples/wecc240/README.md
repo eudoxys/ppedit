@@ -1,0 +1,209 @@
+The WECC 240 data was developed from the original WECC 240 PSS/E file
+`wecc240_case.raw` originally created by CAISO and redistributed by NLR. This
+represents the original 2011 WECC system model. 
+
+The file `wecc240_case.py` is
+updated with the `wecc240_*.csv` files from NLR and represents the system as of 2018. 
+
+The GLM and JSON files currently represent the WECC system using the same model as the PY file (2018 system) but will eventually represent the 2020 system from NLR when it becomes available.
+
+## Data flow
+
+Files are drawn as cylinders and the scripts and ppedit steps that write
+them as boxes; an arrow goes from each input to the step that reads it and
+from each step to the file it writes. All files except the NREL scheduling
+workbook are in this folder.
+
+```mermaid
+flowchart LR
+    subgraph nrel[NREL / NLR inputs]
+        raw[(wecc240_case.raw<br>PSS/E rev 34)]
+        xlsx[(WECC240_2018_Generation_scheduling.xlsx<br>eudoxys/wecc240)]
+        bus[(wecc240_bus.csv)]
+        geo[(wecc240_geodata.csv)]
+    end
+
+    raw --> convert[ppedit convert]
+    convert --> case[(wecc240_case.py<br>DC lines as loads)]
+
+    case --> addgeo[ppedit --geodata]
+    geo --> addgeo
+    addgeo --> map[(wecc240_map.py)]
+    map --> save[ppedit save]
+    save --> mapglm[(wecc240_map.glm)]
+    save --> mapjson[(wecc240_map.json)]
+
+    case --> dclines[ppedit edit<br>geodata, HVDC loads to dcline rows]
+    geo --> dclines
+    dclines --> c2011[(wecc240_2011.py)]
+
+    xlsx --> gentypes[wecc240_gentypes.py]
+    gentypes --> types[(wecc240_gentypes.csv)]
+    types -->|c2,c1,c0 by type| cost[(wecc240_cost.csv)]
+
+    c2011 --> build[build_wecc240_2018.py<br>costs, rateA, Vg, reactors, 80% margin]
+    types --> build
+    cost -->|generator types| build
+    bus -->|bus names| build
+    build --> c2018[(wecc240_2018.py)]
+
+    ba[(wecc240_ba.csv<br>EIA-930 BA by bus)] --> areas[wecc240_areas.py]
+    c2020[(wecc240_2020.py)] --> areas
+    areas -->|in place| c2020
+```
+
+`wecc240_2018.py` and `wecc240_2020.py` (areas, area names and the geodata
+`BA` column) are rebuilt by their scripts, so edit the inputs and rerun the
+script rather than editing these case files. The `ppedit` steps are
+conversions done once with the editor; there is no script for them.
+
+`wecc240_gentypes.csv` gives PYPOWER polynomial costs (`c2*P^2 + c1*P +
+c0`, $/h with `P` in MW) for each generator type, the PSS/E generator ID
+in `wecc240_case.raw` (`C` coal steam, `E` steam, `G` gas, `H` hydro, `S`
+solar, `W` wind, `N` nuclear, `B` biomass; two-letter IDs are units at
+California nodes, e.g. `NG`, `NH`, `NN` for Diablo Canyon). It is derived
+from the unit cost curves in NREL's `WECC240_2018_Generation_scheduling.xlsx`
+(https://github.com/eudoxys/wecc240, `wecc240/data/`) by
+
+    python3 examples/wecc240/wecc240_gentypes.py WECC240_2018_Generation_scheduling.xlsx
+
+`c1` is the first-segment marginal cost of the type's units; `c2` matches
+their variable cost at full output for a unit of the type's median size;
+`c0` is 0 (no-load costs are for unit commitment). NREL prices hydro,
+wind, solar, geothermal, biomass and the Diablo Canyon unit at 0, and the
+case's `Pmax` for them is nameplate capacity, so a single-snapshot OPF
+runs them at `Pmax` unless their `Pmax` is first limited to what is
+available. `SC` and `ND` (0 MW units) have no NREL curve.
+
+`wecc240_cost.csv` has one polynomial cost row per generator (`id` is the
+bus name and PSS/E generator ID), with the `c2,c1,c0` of its type from
+`wecc240_gentypes.csv`; start-up and shutdown costs are 0.
+
+In `wecc240_2011.py` the Pacific DC Intertie (CELILO 4010 to SYLMARLA 2619)
+and the Intermountain line (INTERMT 2604 to ADELANTO 2600) are DC lines with
+zero `dclinecost`. The PSS/E case models them as a load at the rectifier
+bus and a negative load at the inverter bus. The DC lines take the same
+power at the rectifier (`Pf` 3133.1 and 1845.7 MW) with 3.5% losses
+(`loss1` 0.035; `Pt` 3023.4 and 1781.1 MW); the rest of the difference is
+load at the inverter bus (526.0 MW at SYLMARLA, 100.3 MW at ADELANTO), so
+the power flow solution is unchanged. `Pmax` is `Pf`, there is no reactive
+power, and `Vf`, `Vt` are the case voltages.
+
+`wecc240_2018.py` is `wecc240_2011.py` (with its geodata) plus one
+polynomial cost row per generator, the costs of its type from
+`wecc240_gentypes.csv`, and each branch `rateA` (0 in the source case) set
+to its first nonzero `rateB` or `rateC` (0, unlimited, if both are 0).
+Bus voltages are then kept at or below 1.087 pu (under the 1.1 pu `Vmax`):
+the generators at buses 4039, 4131, 4132, 4231 and 6433 get `Vg` 1.08 pu,
+and 1400 MVAr of shunt reactors (`Bs`) are added at buses 2901 (300), 2902
+(200), 4002 (100), 4003 (200), 4090 (50), 4091 (50), 4094 (250) and 4097
+(250). Last, the 13 rated branches loaded above 80% in that power flow get
+`rateA` raised so they are loaded at 80% (a 20% margin), with `rateB` and
+`rateC` raised to match where lower (issue #58). Rebuild it after
+changing the costs with
+
+    python3 examples/wecc240/build_wecc240_2018.py
+
+In `wecc240_2020.py` the areas are the balancing authorities of EIA Form 930
+(issue #90), replacing the four NREL areas. `wecc240_ba.csv` gives the
+EIA-930 code of each bus (`BUS_I,NAME,BA,NOTE`, the note saying why), and
+
+    python3 examples/wecc240/wecc240_areas.py
+
+numbers the areas in alphabetical order of the codes, rebuilds the `areas`
+rows with their default price reference buses and the code as the area
+`name` (issue #93), sets the geodata `BA` column
+to the code, and saves `wecc240_2020.py` in place:
+
+| area | BA | name | buses |
+|---:|---|---|---:|
+| 1 | AESO | Alberta Electric System Operator | 2 |
+| 2 | AZPS | Arizona Public Service | 7 |
+| 3 | BANC | Balancing Authority of Northern California | 8 |
+| 4 | BCHA | BC Hydro | 4 |
+| 5 | BPAT | Bonneville Power Administration | 31 |
+| 6 | CEN | CENACE (Baja California) | 2 |
+| 7 | CISO | California ISO | 106 |
+| 8 | IID | Imperial Irrigation District | 2 |
+| 9 | IPCO | Idaho Power | 5 |
+| 10 | LDWP | Los Angeles Department of Water and Power | 26 |
+| 11 | NEVP | Nevada Power (NV Energy) | 8 |
+| 12 | NWMT | NorthWestern Energy | 6 |
+| 13 | PACE | PacifiCorp East | 16 |
+| 14 | PACW | PacifiCorp West | 1 |
+| 15 | PNM | Public Service Company of New Mexico | 4 |
+| 16 | PSCO | Public Service Company of Colorado | 2 |
+| 17 | PSEI | Puget Sound Energy | 2 |
+| 18 | SRP | Salt River Project | 4 |
+| 19 | SWPW | SPP RTO West (WACM until April 2026) | 4 |
+| 20 | WALC | WAPA Desert Southwest | 3 |
+
+A bus is assigned to the balancing authority of the substation or plant it
+is named for (by voltage where a station is shared: Four Corners 500 kV is
+AZPS and 345/230 kV PNM; Garrison 500 kV is BPAT and 230 kV NWMT; Sylmar
+and Cottonwood have a bus per owner). The case's aggregate load buses take
+the balancing authority of the station they are placed at, so an area's load
+is not that balancing authority's EIA-930 demand: for example, the
+northern Washington load at NORTH (PSEI) also serves SCL and TPWR, and BPAT
+includes the Portland and Willamette Valley loads of PGE and PACW at
+WILLAMET and WCASCADE. Balancing authorities with no bus of their own in the
+240-bus case (AVA, CHPD, DOPD, EPE, GCPD, PGE, SCL, TEPC, TIDC, TPWR and the
+generation-only ones) have no area. The other example files still have the
+NREL areas, including `wecc240_2018.py`.
+
+`wecc240_generation.csv.gz` is a panel of generator `Pmax` by hour for
+2020 (UTC, 8,784 hours) for the generator rows of `wecc240_2020.py`: a
+`timestamp` column and one column per generator row counted from 1. Read
+it on the Multistep tab with *Import ▾ › Panel…* (table gen, value Pmax,
+columns are row numbers); with the case's `real_load` and `reactive_load`
+series (August 2020) it combines by time into the 744 hours of August; its
+August hours are the case's `generation` series. It is built from the WECC 240 node files of eudoxys/generation (`data/wecc`,
+2018 to 2022) by
+
+    python3 examples/wecc240/build_wecc240_generation.py GENERATION/data/wecc [--wecc240 WECC240/wecc240/data]
+
+(`--start`, `--end` and `--case` choose other hours or another case with
+geodata). Each node's `Pmax` is the operating capacity of the dispatchable
+categories other than storage (all but solar, wind, battery and pumped
+storage) plus the actual solar and wind net generation, shared among the
+node's generators in proportion to their case `Pmax`. The storage
+generators (case `Pmin` < 0, the 43 of `wecc240_storage.csv`) have no
+column and keep their case `Pmax` (their storage rating): the node storage
+capacity is theirs, and the build report compares the two at each node. A generator is at the node with its bus's geohash; a
+US generator elsewhere goes to the node its county's generation went to
+(wecc240 `county_node_map.csv`, the county named from the bus FIPS code by
+wecc240 `counties.csv`). The 14 generators in Mexico and Canada have no
+column and keep their case `Pmax`.
+
+`wecc240_storage.csv` has one `storage` row per `wecc240_2020.py` generator
+with a negative `Pmin` (43 rows; they are the case's storage table, and can
+be read into another case on the Case tab with *Storage › Import…*). Each storage unit discharges through that generator and charges
+through it too (`bus_i` -1, no load charges it). Its rating `Smax` is the
+generator's `Pmax`, or `-Pmin` where `Pmax` was 0; those generators are
+in service in the case with `Pmax` = `Smax`. Rows 3, 5 and 6 are taken as
+pumped hydro: 24 hours of capacity at `Smax`, `eta_ch` 0.8, `eta_dis` 0.9,
+no self-discharge, the default aging cost (0.01 $/MWh). The other 40 are
+taken as batteries: 4 hours, `eta_ch` and `eta_dis` 0.9, `self_discharge`
+0.02 per month, aging 5 $/MWh. Every unit starts and must end half full
+(`Es` = `Eend` = `Emax`/2). The case's `generation` series (August of
+`wecc240_generation.csv.gz`) has no column for these generators, so their
+case `Pmax` holds in every step of a multistep OPF.
+
+`build_wecc240_2020.py` loads the data of `wecc240_2020.py` that comes from
+these files and saves the case in place:
+
+    python3 examples/wecc240/build_wecc240_2020.py [CASE] [--check]
+
+It first writes `wecc240_2020_reactive_load.csv` from the real load at
+each bus's power factor in the case bus table (`Qd(t) = Pd(t) Qd/Pd`, 0
+where the case `Pd` is 0; negative where the case `Qd` is). It then
+replaces the storage table with `wecc240_storage.csv` (putting each
+storage generator in service with `Pmax` = `Smax`) and all series with
+`real_load` (`wecc240_2020_real_load.csv`), `reactive_load`
+(`wecc240_2020_reactive_load.csv`) and `generation` (the same hours of
+`wecc240_generation.csv.gz`). It then checks that the reactive load follows the real load at the case
+power factors, that each series reads back unchanged from its file, that the three combine by time into the 744 hours
+of August with no column in two series, that the panel has no column for a
+storage generator, and that the case validates; on a problem it reports it
+and does not save. `--check` only runs the checks. Run it after changing
+any of those files (after `build_wecc240_generation.py` for the panel).
