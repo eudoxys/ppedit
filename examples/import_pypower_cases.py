@@ -5,6 +5,10 @@ a GridLAB-D `module pypower` model (`.glm`) for it with `ppedit`, copies
 the PYPOWER license and authors files, and rewrites the case table in
 `examples/pypower/README.md` (between the `<!-- cases -->` markers).
 
+Cases in `OTHER_CASES` come from elsewhere (see `examples/pypower/README.md`):
+their `.py` files are kept as they are and only their `.glm` files are
+rewritten.
+
 Run from the repository root:
 
     python3 examples/import_pypower_cases.py
@@ -26,6 +30,7 @@ from ppedit import Case, builtin_cases
 
 HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)),"pypower")
 SOURCE = os.path.dirname(pypower.__file__)
+OTHER_CASES = ("case9_dcline",) # not PYPOWER built-ins: .py kept, .glm rewritten
 
 def _license_dir():
     """Folder holding the installed pypower LICENSE and AUTHORS files"""
@@ -41,7 +46,10 @@ def main() -> int:
     warnings.simplefilter("ignore")
     os.makedirs(HERE,exist_ok=True)
     for old in glob.glob(os.path.join(HERE,"case*.*")):
-        os.remove(old)
+        if os.path.splitext(os.path.basename(old))[0] not in OTHER_CASES:
+            os.remove(old)
+    for name in OTHER_CASES:
+        Case.load(os.path.join(HERE,f"{name}.py")).save(os.path.join(HERE,f"{name}.glm"))
     licenses = _license_dir()
     for name in ("LICENSE","AUTHORS"):
         shutil.copy(os.path.join(licenses,name),os.path.join(HERE,name))
