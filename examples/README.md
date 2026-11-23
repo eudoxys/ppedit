@@ -194,12 +194,15 @@ these files and saves the case in place:
 
     python3 examples/build_wecc240_2020.py [CASE] [--check]
 
-It replaces the storage table with `wecc240_storage.csv` (putting each
+It first writes `wecc240_2020_reactive_load.csv` from the real load at
+each bus's power factor in the case bus table (`Qd(t) = Pd(t) Qd/Pd`, 0
+where the case `Pd` is 0; negative where the case `Qd` is). It then
+replaces the storage table with `wecc240_storage.csv` (putting each
 storage generator in service with `Pmax` = `Smax`) and all series with
 `real_load` (`wecc240_2020_real_load.csv`), `reactive_load`
 (`wecc240_2020_reactive_load.csv`) and `generation` (the same hours of
-`wecc240_generation.csv.gz`). It then checks that each series reads back
-unchanged from its file, that the three combine by time into the 744 hours
+`wecc240_generation.csv.gz`). It then checks that the reactive load follows the real load at the case
+power factors, that each series reads back unchanged from its file, that the three combine by time into the 744 hours
 of August with no column in two series, that the panel has no column for a
 storage generator, and that the case validates; on a problem it reports it
 and does not save. `--check` only runs the checks. Run it after changing
