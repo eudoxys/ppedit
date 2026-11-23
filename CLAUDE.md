@@ -317,6 +317,10 @@ API key to start sessions; tests use a fake client).
   (`stepsPlot`, `loadPlotly`, `stepsPlotEl` kept across renders for
   `uirevision` zoom) uses the vendored Plotly basic bundle; don't edit it,
   replace it with a newer release and update its version in DESIGN #2.
+  Multistep tab series view: Data/Plot tabs and Columns ▾ (`seriesViewBar`,
+  `S.seriesTab`, `seriesOrder` by descending column sum, `seriesShown`,
+  `S.seriesCols`, `SERIES_COLS` = 5 by default; `seriesPlot` with
+  `seriesPlotEl` kept across renders, same Plotly bundle).
   Step controls and Copy to case (`renderSeriesStep`, `S.seriesStep`,
   `stepTimes`, `POST /api/series/apply`, `Case.apply_step`) work on
   combined steps; `seriesStepRow` maps the step to the shown series' row.
