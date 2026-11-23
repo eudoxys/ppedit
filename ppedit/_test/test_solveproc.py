@@ -7,6 +7,8 @@ process)."""
 
 import importlib.util
 import io
+import os
+import signal
 import threading
 import time
 
@@ -153,3 +155,67 @@ def test_server_progress_and_stop(monkeypatch):
     r = out["r"]["result"]
     assert r["stopped"] and not r["success"]
     assert client.get("/api/solve/progress").get_json()["running"] is False
+
+def _running_child(job,timeout=30):
+    """Wait until `job` is stoppable; return its child process"""
+    end = time.time() + timeout
+    while time.time() < end:
+        if job.stoppable and _solveproc._RUNNING: # pylint: disable=protected-access
+            return next(iter(_solveproc._RUNNING)) # pylint: disable=protected-access
+        time.sleep(0.05)
+    raise AssertionError("the child did not start")
+
+@pytest.mark.skipif(os.name == "nt",reason="POSIX process groups")
+def test_child_detached(monkeypatch):
+    """The child is outside the server's process group (Ctrl-C in the terminal does not reach it)"""
+    monkeypatch.setattr(_solveproc,"_CHILD",SLOW_CHILD)
+    job = SolveJob()
+    def run():
+        try:
+            _solveproc.run(job,{},"ac",io.StringIO())
+        except _solveproc.SolveStopped:
+            pass
+    thread = threading.Thread(target=run)
+    thread.start()
+    proc = _running_child(job)
+    assert os.getpgid(proc.pid) != os.getpgrp() and os.getsid(proc.pid) != os.getsid(0)
+    job.stop()
+    thread.join(20)
+    assert not _solveproc._RUNNING # pylint: disable=protected-access
+
+@needs_cvxopf
+@pytest.mark.skipif(os.name == "nt",reason="POSIX signals")
+def test_child_ignores_sigint():
+    """SIGINT sent to the solver child does not interrupt the solve"""
+    case = Case.builtin("case9")
+    _ = case.set_series(["bus.Pd.5"],[[90+t] for t in range(24)])
+    job,out = SolveJob(),{}
+    thread = threading.Thread(target=lambda: out.setdefault("r",case.solve("opf","CVXOPF-DC",job=job,multistep=True)))
+    thread.start()
+    proc = _running_child(job)
+    end = time.time() + 30
+    while time.time() < end and job.status().get("phase") in (None,"start"):
+        time.sleep(0.02)  # the child is running _main (SIGINT ignored since its first statement)
+    for _ in range(5):
+        if proc.poll() is not None:
+            break
+        os.kill(proc.pid,signal.SIGINT)
+        time.sleep(0.05)
+    thread.join(60)
+    assert out["r"]["success"], out["r"]["messages"]
+
+def test_kill_running_at_exit(monkeypatch):
+    """Solver children still running when the server exits are killed"""
+    monkeypatch.setattr(_solveproc,"_CHILD",SLOW_CHILD)
+    job,out = SolveJob(),{}
+    def run():
+        try:
+            _solveproc.run(job,{},"ac",io.StringIO())
+        except Exception as err: # pylint: disable=broad-exception-caught
+            out["err"] = err
+    thread = threading.Thread(target=run)
+    thread.start()
+    proc = _running_child(job)
+    _solveproc._kill_running() # pylint: disable=protected-access
+    thread.join(20)
+    assert proc.poll() is not None and isinstance(out["err"],_solveproc.SolverProcessError)

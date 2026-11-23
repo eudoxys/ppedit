@@ -350,7 +350,10 @@ API key to start sessions; tests use a fake client).
   from IPOPT comes from an `intermediate` method added to CVXPY's
   `Oracles` during the solve (`_ipopt_progress`, cvxpy 1.9 internals; it
   stays out of the way if CVXPY ever defines one). The child's verbose
-  solver output reaches the log only when it finishes. Tests swap the
+  solver output reaches the log only when it finishes. The child runs in
+  its own session and ignores SIGINT (first statement of `_CHILD`), so
+  terminal Ctrl-C does not interrupt it; `_kill_running` (atexit) kills
+  children left when the server exits. Tests swap the
   child code (`_solveproc._CHILD`) for a stand-in to stop or kill it.
   `followSolve` in `app.js` polls `/api/solve/progress` with `background`
   and sets `busy.detail`/`busy.stop`. The page's solves are background
