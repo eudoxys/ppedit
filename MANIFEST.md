@@ -54,6 +54,8 @@ Update this file in the same PR that adds, moves, or deletes a file.
 | `ppedit/server.py` | `create_app()`, `Editor` (undo/redo), JSON API, `about()` package metadata | tested by `_test/test_server.py` |
 | `ppedit/static/index.html` | editor page layout | |
 | `ppedit/static/style.css` | editor styles | |
+| `ppedit/static/vendor/plotly-basic.min.js` | Plotly basic bundle (plotly.js-basic-dist-min 4.3.0), vendored unchanged for the Results step plot (decision #2) | third-party, minified ~1.2 MB; don't read or edit |
+| `ppedit/static/vendor/plotly-LICENSE.txt` | Plotly's MIT license | third-party |
 | `ppedit/static/app.js` | editor logic: tables, network diagram (simple, classic and one-line styles; force and geodata layouts with map layers; labels menu), results, issues, Agent sessions, settings | checked by hand (see `CLAUDE.md`) |
 | `ppedit/.gitignore` | generated-output ignores | |
 
@@ -129,4 +131,4 @@ Update this file in the same PR that adds, moves, or deletes a file.
 
 ## Don't read
 
-`docs/` (generated), `.venv/`, `*.egg-info/`.
+`docs/` (generated), `.venv/`, `*.egg-info/`, `ppedit/static/vendor/` (vendored third-party JS, minified).

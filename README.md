@@ -268,7 +268,11 @@ In the editor:
     the steps have no time labels) or the arrows (first, 24 back, 1 back,
     1 forward, 24 forward, last), and click **Copy to case**: every series
     value of that step (all series combined) replaces the case value, as
-    one edit that Ctrl+Z undoes; the series stays. Each series is read with **Import…** from a data file (same formats as the
+    one edit that Ctrl+Z undoes; the series stays. After a multistep
+    solve, the Results tab's **Steps** table has **Data** and **Plot**
+    tabs: Plot draws generation, load, losses, storage and cost over the
+    steps (zoom and pan by dragging or with the toolbar, save as PNG,
+    click a point to show that step). Each series is read with **Import…** from a data file (same formats as the
     tables) with one row per time step: an optional label column (`time`,
     `timestamp`, `date`, `step` or `index`) and one column per value,
     named `bus.Pd.N` or `bus.Qd.N` (bus number `N`), `gen.Pmin.N` or

@@ -63,6 +63,13 @@ def test_app_name_changed(client,monkeypatch):
     monkeypatch.setattr(branding,"APP_MARK","XY")  # not a prefix: no mark
     assert 'aria-haspopup="dialog">Grid &lt;Edit&gt;</button>' in client.get("/").get_data(as_text=True)
 
+def test_vendored_plotly(client):
+    """Plotly is served locally (decision #2) and not loaded by the page itself"""
+    res = client.get("/static/vendor/plotly-basic.min.js")
+    assert res.status_code == 200 and b"plotly.js (basic - minified)" in res.data[:200]
+    assert "plotly" not in client.get("/").get_data(as_text=True).lower()
+    assert "/static/vendor/plotly-basic.min.js" in client.get("/static/app.js").get_data(as_text=True)
+
 def test_static_files_not_cached(client):
     """The page and its files are revalidated on every load"""
     for url in ["/","/static/app.js","/static/style.css"]:
