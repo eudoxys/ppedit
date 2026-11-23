@@ -455,6 +455,12 @@ and the About dialog adds "Based on ppedit." when the name differs.
 
 # Examples
 
+[`examples/`](examples/README.md) has one folder per model:
+[`pypower/`](examples/pypower/) (the PYPOWER test cases),
+[`wecc240/`](examples/wecc240/README.md) (the WECC 240-bus system, with
+2011, 2018 and 2020 cases, storage and August 2020 hourly series) and
+[`ieee118/`](examples/ieee118/README.md) (to come).
+
 ## PYPOWER cases
 
 [`examples/pypower/`](examples/pypower/) holds the PYPOWER standard test
