@@ -128,18 +128,28 @@ open case was read, see `ppedit.Case.source`, or `null`), and `loads_off`
     series as one multistep OPF with a `CVXOPF-*` solver (the result has
     `steps`). The result's `messages` (solver errors and
     warnings, with an optional `detail`: physical meaning and constraints
-    involved) are listed on the page's Issues tab
+    involved) are listed on the page's Issues tab. With `"background":
+    true` the request returns the state at once with `solving` true and
+    the solve runs on a copy of the case in a server thread, so other
+    requests (edits included) go on meanwhile; `/api/solve/progress` then
+    reports when it ends, and the result becomes the state's `result` only
+    if the case did not change while solving (an edit clears the result,
+    as without `background`). One solve runs at a time: another
+    `/api/solve` while one runs is refused (HTTP 409)
   - `GET  /api/solve/progress`: progress of the running solve:
     `running`, `elapsed` (s), `stoppable` (a `CVXOPF-*` solve, run in a
     child process), `stopping`, `phase`, `text` (one line for display,
     e.g. `IPOPT iteration 120 of at most 3000, primal infeasibility
     3.20e-04`), and while IPOPT iterates `iteration`, `max_iter`,
     `objective`, `inf_pr`, `inf_du` (see `ppedit._solveproc`); only
-    `running` false when no solve has run
+    `running` false when no solve has run. A background solve also has
+    `background` true, `kind`, `revision` (of the case it solves) and, once ended,
+    `outcome`: `result` (the state's `result` is new), `discarded` (the
+    case changed while solving) or `error` (with `error`, the message)
   - `POST /api/solve/stop`: stop the running `CVXOPF-*` solve (its child
     process is killed); returns `running` and `stopping` (false when
-    there is nothing to stop). The pending `/api/solve` request then
-    returns a failed result with `stopped` true
+    there is nothing to stop). The pending `/api/solve` request (or the
+    background solve) then gives a failed result with `stopped` true
   - `POST /api/apply`: `{"step"?}` copy the last solution into the case
     (`step`: the step of a multistep solution, counted from 0; default 0)
   - `POST /api/geodata`: `{"filename": ..., "text": ...}` (CSV upload),
@@ -631,6 +641,9 @@ class Editor:
             "loads_off": [[bus,pd,qd] for bus,(pd,qd) in sorted(self.loads_off.items())],
         }
 
+class SolveBusy(CaseError):
+    """A solve was requested while another one runs (HTTP 409)"""
+
 def token_cookie(token:str) -> str:
     """Name of the session cookie for `token`
 
@@ -725,6 +738,10 @@ def create_app(case:Case|None=None,path:str|None=None,allow_remote:bool=False,
     @app.errorhandler(CaseError)
     def _case_error(err):
         return jsonify(error=str(err)),400
+
+    @app.errorhandler(SolveBusy)
+    def _solve_busy(err):
+        return jsonify(error=str(err)),409
 
     @app.errorhandler(KeyError)
     def _key_error(err):
@@ -895,14 +912,43 @@ def create_app(case:Case|None=None,path:str|None=None,allow_remote:bool=False,
             editor.redo()
             return jsonify(editor.state(True))
 
+    def start_background_solve(args) -> dict:
+        """Start solving a copy of the case in a thread (editor.lock held);
+        the result is kept only if the case revision is unchanged at the end"""
+        job = editor.job = SolveJob()
+        case,revision = copy.deepcopy(editor.case),editor.revision
+        job.background_status = {"background":True,"revision":revision,"kind":args[0]}
+        def run():
+            result,error = None,None
+            try:
+                result = case.solve(*args,job=job)
+            except Exception as err: # pylint: disable=broad-exception-caught
+                error = str(err) if isinstance(err,(CaseError,ValueError)) else f"{type(err).__name__}: {err}"
+            with editor.lock:
+                if error is not None:
+                    outcome = {"outcome":"error","error":error}
+                elif editor.revision == revision:
+                    editor.result = result
+                    outcome = {"outcome":"result"}
+                else:
+                    outcome = {"outcome":"discarded"}
+                job.background_status = dict(job.background_status,**outcome)
+                job.done = True
+        threading.Thread(target=run,name="ppedit-solve",daemon=True).start()
+        return {"revision":revision}
+
     @app.post("/api/solve")
     def solve():
         data = body()
+        args = (data.get("kind","pf"),data.get("algorithm"),data.get("options"),bool(data.get("multistep")))
         with editor.lock:
+            if editor.job is not None and not editor.job.done:
+                raise SolveBusy("a solve is already running: wait for it or stop it")
+            if data.get("background"):
+                return jsonify(dict(editor.state(),solving=True,**start_background_solve(args)))
             job = editor.job = SolveJob()
             try:
-                editor.result = editor.case.solve(data.get("kind","pf"),
-                    data.get("algorithm"),data.get("options"),bool(data.get("multistep")),job=job)
+                editor.result = editor.case.solve(*args,job=job)
             finally:
                 job.done = True
             return jsonify(editor.state())
@@ -915,6 +961,7 @@ def create_app(case:Case|None=None,path:str|None=None,allow_remote:bool=False,
             return jsonify(running=False)
         status = job.status()
         status["text"] = describe(status)
+        status.update(getattr(job,"background_status",{}))
         return jsonify(status)
 
     @app.post("/api/solve/stop")

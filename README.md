@@ -230,7 +230,14 @@ In the editor:
     file can be imported again.
   - **Run PF ▾** and **Run OPF ▾** (toolbar) each open a menu of solvers;
     choosing one runs it; while it runs, the button's ▾ turns into ● and
-    the button is disabled until the solver returns. While a `CVXOPF-*`
+    both buttons are disabled until the solver returns (one solve at a
+    time). The solve runs in the background on a copy of the case: the
+    rest of the page stays usable (tabs, tables, the diagram, editing,
+    saving). The result shows when it finishes, and the Results tab opens
+    if you are still on the tab where you started it; if the case was
+    edited meanwhile, the result is discarded (it would not match the
+    case) and a message says so. Reloading the page during a solve
+    follows it again. While a `CVXOPF-*`
     solve runs, the busy label shows its phase or IPOPT iteration and
     infeasibility, and a **Stop** button ends it (the case is unchanged).
     Run PF lists the PYPOWER power flow algorithms
