@@ -3,13 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ppedit</title>
+<meta name="app-name" content="{{APP_NAME}}">
+<title>{{APP_NAME}}</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%223%22 fill=%22%231f6f5c%22/%3E%3Ccircle cx=%225%22 cy=%2211%22 r=%222%22 fill=%22white%22/%3E%3Ccircle cx=%2211%22 cy=%225%22 r=%222%22 fill=%22white%22/%3E%3Cpath d=%22M5 11L11 5%22 stroke=%22white%22/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <header class="topbar">
-  <button id="brand" class="brand" title="About ppedit" aria-haspopup="dialog"><span class="mark">pp</span>edit</button>
+  <button id="brand" class="brand" title="About {{APP_NAME}}" aria-haspopup="dialog">{{APP_BRAND}}</button>
   <div class="docinfo">
     <input id="case-name" class="name-input" spellcheck="false" title="Case name">
     <span id="dirty" class="dirty" title="Unsaved changes" hidden>●</span>
@@ -32,7 +33,7 @@
       <div id="open-menu" class="dropdown">
         <button data-action="open" title="Choose a case file on this computer">Local file…</button>
         <div class="sep">From URL</div>
-        <form id="open-url-form" class="url-form" title="Download a .py, .json, .glm or .raw case (the ppedit server downloads it)">
+        <form id="open-url-form" class="url-form" title="Download a .py, .json, .glm or .raw case (the {{APP_NAME}} server downloads it)">
           <input type="url" id="open-url" placeholder="https://…/case.glm" required spellcheck="false">
           <button type="submit">Open</button>
         </form>
@@ -64,17 +65,18 @@
       <div id="opf-menu" class="dropdown" role="menu"></div>
     </div>
     <span class="divider"></span>
-    <button data-action="exit" class="exit" title="Stop the ppedit server">Exit</button>
+    <button data-action="exit" class="exit" title="Stop the {{APP_NAME}} server">Exit</button>
   </div>
 </header>
 
 <nav class="tabs" id="tabs">
   <button data-view="network">Network</button>
-  <button data-view="tables" title="Case data tables">Tables</button>
+  <button data-view="case" title="Case data tables">Case</button>
+  <button data-view="multistep" title="Time series of case values for multistep OPF">Multistep <span class="count" id="series-count"></span></button>
   <button data-view="results">Results <span class="status-dot" id="result-dot"></span></button>
   <button data-view="issues">Issues <span class="count issues" id="issue-count"></span><span class="status-dot" id="issue-dot"></span></button>
-  <button data-view="claude" title="Claude sessions that edit the case">Claude <span class="status-dot" id="claude-dot"></span></button>
-  <button data-view="settings" title="Settings: baseMVA and version, display precision, cvxopf solve options">Settings</button>
+  <button data-view="agent" title="Agent sessions that edit the case">Agent <span class="status-dot" id="agent-dot"></span></button>
+  <button data-view="settings" title="Settings: baseMVA and version, display precision, cvxopf solve options, agents">Settings</button>
 </nav>
 
 <main id="main">
@@ -141,6 +143,7 @@
       <button data-view="gencost">Gen costs <span class="count" data-count="gencost"></span></button>
       <button data-view="dcline">DC lines <span class="count" data-count="dcline"></span></button>
       <button data-view="dclinecost">DC line costs <span class="count" data-count="dclinecost"></span></button>
+      <button data-view="storage">Storage <span class="count" data-count="storage"></span></button>
       <button data-view="areas">Areas <span class="count" data-count="areas"></span></button>
     </nav>
     <div class="table-tools">
@@ -158,6 +161,28 @@
     </div>
     <div class="table-wrap"><table id="grid"></table></div>
   </section>
+  <section id="view-series" class="view">
+    <div class="table-tools">
+      <label class="inline" title="The series shown; multistep OPF combines them all">Series <select id="series-pick" aria-label="Series shown"></select></label>
+      <div class="menu">
+        <button data-menu="series-import-menu" title="Read a time series from a data file">Import ▾</button>
+        <div id="series-import-menu" class="dropdown left" role="menu">
+          <button data-action="series-import" role="menuitem" title="Replace the series with a file whose columns are named table.column.key">Series file…</button>
+          <button data-action="series-panel" role="menuitem" title="Steps in rows, table row numbers or geohashes in columns, all for one table value">Panel…</button>
+        </div>
+      </div>
+      <div class="menu">
+        <button data-menu="series-export-menu" id="series-export-btn">Export ▾</button>
+        <div id="series-export-menu" class="dropdown left" role="menu"></div>
+      </div>
+      <label class="inline" title="Length of each time step (hours)">Step length <input id="series-delta" class="num" size="5" aria-label="Hours per time step"> h</label>
+      <button data-action="series-clear" id="series-clear" class="danger">Remove series</button>
+      <input type="file" id="series-input" hidden>
+      <span class="hint" id="series-hint"></span>
+    </div>
+    <div id="series-step" class="table-tools series-step" hidden></div>
+    <div id="series-body" class="series-body"></div>
+  </section>
   <section id="view-results" class="view"></section>
   <section id="view-issues" class="view"></section>
   <section id="view-settings" class="view">
@@ -167,11 +192,17 @@
       <label><span>version</span> <input id="version" class="num" size="8" title="PYPOWER case format version"></label>
       <h2>Display precision</h2>
       <div id="precision-settings" class="settings-group"></div>
+      <h2>Data import</h2>
+      <div id="import-settings" class="settings-group"></div>
       <h2 id="cvxopf-title" hidden>CVXOPF solve options</h2>
       <div id="cvxopf-settings" class="settings-group" hidden></div>
+      <h2 id="multistep-title" hidden>CVXOPF multistep options</h2>
+      <div id="multistep-settings" class="settings-group" hidden></div>
+      <h2>Agents</h2>
+      <div id="agent-settings" class="settings-group"></div>
     </div>
   </section>
-  <section id="view-claude" class="view">
+  <section id="view-agent" class="view">
     <div class="claude-tools">
       <input id="claude-title" placeholder="Session title (optional)" size="22">
       <select id="claude-model" title="Claude model"></select>
@@ -186,9 +217,10 @@
   </section>
 </main>
 
-<div id="busy" class="busy" role="status" aria-live="polite"><div class="busy-bar"></div><span class="busy-text">Loading…</span></div>
+<div id="busy" class="busy" role="status" aria-live="polite"><div class="busy-bar"></div><span class="busy-text"><span class="busy-label">Loading…</span><button type="button" class="busy-stop" hidden title="Stop the solver (its process is ended; the case is not changed)">Stop</button></span></div>
 <div id="toast" class="toast" hidden></div>
 <dialog id="about" class="about" aria-labelledby="about-title"></dialog>
+<dialog id="panel-dialog" class="about panel-dialog" aria-labelledby="panel-title"></dialog>
 <dialog id="server-down" class="server-down" aria-labelledby="server-down-title"></dialog>
 <script src="/static/app.js"></script>
 </body>

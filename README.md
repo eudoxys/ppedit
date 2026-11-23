@@ -177,9 +177,9 @@ In the editor:
     contain it. A single match is selected for editing in the side panel
     and centered in the diagram; several matches open a list to choose from
     (mouse, or arrow keys and Enter; Escape closes it).
-  - **Tables**: a second row of tabs below the main tabs picks the table
+  - **Case**: a second row of tabs below the main tabs picks the table
     (**Buses / Generators / Branches / Gen costs / DC lines / DC line
-    costs / Areas**); the Tables tab reopens the table shown last.
+    costs / Areas**); the Case tab reopens the table shown last.
     Spreadsheet-style editing; Enter or Tab commits, Escape
     cancels. Renumbering a bus updates the generators, branches, DC lines
     and area price reference buses that use it; deleting a bus asks before
@@ -192,7 +192,28 @@ In the editor:
     rows as one; the format comes from the file extension: `.csv`,
     `.tsv`, `.json` (each optionally compressed as `.gz`, `.bz2`, `.xz`,
     `.zip`), `.parquet` and `.feather` (need `pyarrow`), `.xlsx` (needs
-    `openpyxl`). Columns are named as in the table header. With no rows
+    `openpyxl`). **Import…** (here and on the Multistep tab) also reads the
+    other formats pandas reads, when their engine is installed: `.jsonl`
+    and `.ndjson`, `.xml`, `.html` (first table; `lxml`), `.fwf`
+    (fixed-width text), `.xlsm`, `.xls`, `.xlsb` and `.ods`
+    (`python-calamine`, or `openpyxl`, `xlrd`, `pyxlsb`, `odfpy`), `.orc`
+    (`pyarrow`), `.h5`/`.hdf5` (`tables`; one data set), Stata `.dta`, SAS
+    `.sas7bdat` and `.xpt`, and SPSS `.sav` (`pyreadstat`); these are not
+    exported. Pickle files are refused, since loading one can run code.
+    *Settings › Data import › Missing values* (also in the panel dialog)
+    drops missing (empty or NaN) cells when a file is read, for table,
+    series and panel imports: rows (steps) or columns with any missing
+    value, or only empty ones; a series time column is never dropped.
+    Every **Import…** (table rows, *Series file…*, *Panel…*) opens a
+    dialog with the file format, the missing values choice and a row
+    range (data rows counted from 1 after the header: `1-24`, `25-`,
+    `-100`, `7`); series and panels also take a *From*/*To* date range
+    matched against the time column (inclusive; a *To* date alone takes
+    in that whole day). The row range applies first, then the dates, then
+    the missing values. Series and panels also take *Scale* and *Offset*:
+    each value read becomes `value × scale + offset` (e.g. scale `0.001`
+    for kW to MW; for a panel before a geohash cell is shared).
+    Columns are named as in the table header. With no rows
     selected, import appends the file's rows (missing columns take their
     defaults) and export writes every row; with rows selected, import
     replaces them with the file's rows (same columns and number of rows)
@@ -209,7 +230,17 @@ In the editor:
     file can be imported again.
   - **Run PF ▾** and **Run OPF ▾** (toolbar) each open a menu of solvers;
     choosing one runs it; while it runs, the button's ▾ turns into ● and
-    the button is disabled until the solver returns. Run PF lists the PYPOWER power flow algorithms
+    both buttons are disabled until the solver returns (one solve at a
+    time). The solve runs in the background on a copy of the case: the
+    rest of the page stays usable (tabs, tables, the diagram, editing,
+    saving). The result shows when it finishes, and the Results tab opens
+    if you are still on the tab where you started it; if the case was
+    edited meanwhile, the result is discarded (it would not match the
+    case) and a message says so. Reloading the page during a solve
+    follows it again. While a `CVXOPF-*`
+    solve runs, the busy label (at the right end of the tab bar) shows its phase or IPOPT iteration and
+    infeasibility, and a **Stop** button ends it (the case is unchanged).
+    Run PF lists the PYPOWER power flow algorithms
     (Newton, fast-decoupled XB and BX, Gauss-Seidel). Run OPF lists the
     OPF solvers that are installed: AC OPF with PIPS (interior point or
     step-controlled) and IPOPT (needs `pyipopt`), and DC OPF with PIPS,
@@ -223,6 +254,63 @@ In the editor:
     `Case.solve(kind,algorithm,options)` takes the same choices (`ppedit.case.solvers()`
     lists them). A DC OPF solution has flat voltages (1 pu), no reactive
     power and no losses.
+  - **Multistep**: time series of case values for multistep OPF (issue
+    #124). A case holds several named series: each import adds one,
+    named after the file unless the dialog names it (an existing name is
+    replaced, or for a panel added to). The *Series* picker shows one
+    series, or *All combined* lists them; step length, Export and Remove
+    act on the series shown. Multistep OPF combines all series: by time
+    when every series was imported with a time column (only the times
+    common to all are solved; ISO dates and times are compared as times,
+    other labels as text), else step by step (all must have the same
+    number of steps). A value given by several series is their sum, e.g. a
+    base load series and an EV load series for the same bus (the sum
+    replaces the case value); all series must have the same step length,
+    and the tab says why when they cannot be combined. The
+    multistep builder options (temporal assembly, branch limits, loss
+    weight and others, each for the network models it applies to) are on
+    the Settings tab under *CVXOPF multistep options*. To put the values
+    of one step into the case, check **Step** in the row under the
+    toolbar, choose the step with its date and time (or its number when
+    the steps have no time labels) or the arrows (first, 24 back, 1 back,
+    1 forward, 24 forward, last), and click **Copy to case**: every series
+    value of that step (all series combined) replaces the case value, as
+    one edit that Ctrl+Z undoes; the series stays. The series shown has
+    **Data** and **Plot** tabs above its table, and **Columns ▾** chooses
+    the columns shown in both (listed from the largest sum over the steps
+    down; the five largest are shown at first). In the plot, drag or use
+    the toolbar to zoom and pan, save it as PNG, and click a point to
+    choose that step for Copy to case. After a multistep
+    solve, the Results tab's **Steps** table has **Data** and **Plot**
+    tabs: Plot draws generation, load, losses, storage and cost over the
+    steps (zoom and pan by dragging or with the toolbar, save as PNG,
+    click a point to show that step). Each series is read with **Import…** from a data file (same formats as the
+    tables) with one row per time step: an optional label column (`time`,
+    `timestamp`, `date`, `step` or `index`) and one column per value,
+    named `bus.Pd.N` or `bus.Qd.N` (bus number `N`), `gen.Pmin.N` or
+    `gen.Pmax.N` (generator row `N`, from 1), `dcline.Pmin.N` or
+    `dcline.Pmax.N` (DC line row `N`). Values not in the file keep their
+    case values. **Import ▾ › Panel…** reads instead a file with one row
+    per step and one column per table row number (from 1; for buses the
+    row, not the bus number) or geohash cell, all giving one value chosen
+    in its dialog (e.g. bus `Pd`); the dialog's *File format* limits the
+    file chooser to one of the readable formats (or any of them; `csv`
+    and `tsv` also list each compressed form, e.g. `csv.gz`). A
+    geohash cell's value is shared among
+    the elements located in it by bus geodata (generators by their bus, DC
+    lines by their from bus): in proportion to their case values (equally
+    when those are all zero), equally, or the whole value to each; cells
+    with no element are ignored and reported. A panel can be added to the
+    current series (same number of steps), replacing that value for the
+    elements it covers. The step length (hours) is set beside it; **Export ▾**
+    and **Remove series** are undoable like other edits. The series is
+    saved in `.py` and `.json` cases (not `.glm`). With cvxopf installed,
+    **Run OPF ▾ › Multistep OPF** solves every step as one cvxopf problem with
+    the chosen network model; the Results tab then has a step picker, the
+    horizon cost, a table of steps, and **Apply step N to case**, and the
+    diagram and solution columns show the chosen step (the diagram draws
+    the case loads). Steps are not coupled (no ramp limits or storage).
+    Generator limits by step need the default CVXOPF preparation.
   - **Results**: PF/OPF summary (with the solver used), bus voltages (and LMPs for OPF), dispatch,
     branch flows and loading, DC line flows and losses, area totals, the
     PYPOWER report, and **Apply solution to case** to copy the solved
@@ -240,13 +328,14 @@ In the editor:
     the SOCP cones and loops the relaxation leaves unmet, or the
     `rateA` = 0 branches cvxopf limits), each linked to its table row. The tab's dot is red when there is
     an error and yellow when there are only warnings.
-  - **Claude**: any number of conversations with Claude, each in its own tab (the
+  - **Agent**: any number of conversations with an agent (Claude), each in its own tab (the
     Anthropic Messages API) that read and edit the open case, check it and
     run PF/OPF. Each session chooses a model and its data sources: the case
     only, the web (search and public data downloads), and/or the files in
     one folder on the server machine. Every change Claude makes is one
     undoable edit and shows up in the other tabs as it happens. Needs an
-    API key in `ANTHROPIC_API_KEY` or `~/.anthropic` (see `ppedit.claude`).
+    API key in `ANTHROPIC_API_KEY` or `~/.anthropic`, or given in Settings
+    (see `ppedit.claude`).
   - **Settings**: the case `baseMVA` and `version`, and the display
     precision (decimal places) of the case table values by unit (defaults:
     MW, MVAr, MVA, MW/min, MVAr/min, $ 2; per-unit impedance, per-unit
@@ -258,6 +347,11 @@ In the editor:
     solver for the convex models (SOCP, DC, copper plate), solver output in
     the log, and other solver options as `name=value` pairs (e.g. IPOPT
     `max_iter=500, tol=1e-8`). Saved in the browser, not in the case.
+    Under *Agents*: the agent used by new Agent-tab sessions (only Claude),
+    and its API key: the server default (`ANTHROPIC_API_KEY` or
+    `~/.anthropic`), key text typed in the page (kept in the browser's
+    storage in plain text), or the name of a file on the server machine
+    whose first line is the key.
   - Undo/redo (Ctrl+Z, Ctrl+Shift+Z) covers every edit; Ctrl+S saves.
 
 DC lines follow the PYPOWER `dcline` format (`pypower.idx_dcline`) and are
@@ -270,6 +364,16 @@ GridLAB-D has no DC line cost class, so `dclinecost` rows are written as
 `dclinecost` objects (a runtime class with the `pypower.gencost`
 properties, parent the DC line) and read back from them; GridLAB-D keeps
 them but does not solve with them.
+
+Storage (the `storage` table, ppedit's own) is discharged through a
+generator (`gen_i`, its row counted from 1) and charges at bus `bus_i`, or
+through the same generator (negative output) when `bus_i` is -1. Each row
+gives the starting, minimum, maximum and final energy (`Es`, `Emin`,
+`Emax`, `Eend`, MWh; `Eend` -1 leaves it free), the power rating `Smax`,
+the charge and discharge efficiencies, the self-discharge per month and an
+aging cost per MWh of throughput. Only multistep CVXOPF OPF models it: the
+Results tab then shows each step's charge, discharge and stored energy.
+GLM files store it as `pp_storage` objects (a runtime class).
 
 Areas follow the PYPOWER `areas` format (`area`, `price_ref_bus`; see
 `pypower.caseformat`) and list the areas named by the bus `area` column.
@@ -333,7 +437,29 @@ and `coverage-report` artifact of the Validation workflow). The report for
 `main` is published at https://www.eudoxys.com/ppedit/coverage/ and feeds
 the Coverage badge above.
 
+## Change the displayed name
+
+The browser page shows the name `ppedit` in the window title, the top-bar
+title, tooltips, server status dialogs and messages, and the About dialog
+heading. To show another name, edit `ppedit/_branding.py`:
+
+```python
+APP_NAME = "GridEdit"   # the name shown in the page (default "ppedit")
+APP_MARK = "Grid"       # leading part drawn in the accent color ("" for none)
+```
+
+and restart `ppedit serve`. The name only changes what the page shows: the
+package, the `ppedit` command, saved browser settings, and the copyright,
+license and funding acknowledgment in the About dialog stay as they are,
+and the About dialog adds "Based on ppedit." when the name differs.
+
 # Examples
+
+[`examples/`](examples/README.md) has one folder per model:
+[`pypower/`](examples/pypower/) (the PYPOWER test cases),
+[`wecc240/`](examples/wecc240/README.md) (the WECC 240-bus system, with
+2011, 2018 and 2020 cases, storage and August 2020 hourly series) and
+[`ieee118/`](examples/ieee118/README.md) (to come).
 
 ## PYPOWER cases
 

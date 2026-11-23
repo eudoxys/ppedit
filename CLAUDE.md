@@ -10,7 +10,8 @@ specific to this package.
 A local web application for editing PYPOWER cases and Arras Energy
 GridLAB-D `module pypower` models: a Flask server (`ppedit/server.py`) holds
 one `Case` (`ppedit/case.py`) in memory and serves a plain HTML/CSS/JS editor
-(`ppedit/static/`, no build step, no JS dependencies). Python 3.12, alpha.
+(`ppedit/static/`, no build step; the only third-party JS is Plotly, vendored in
+`ppedit/static/vendor/`, decision #2). Python 3.12, alpha.
 
 - Docs site: https://www.eudoxys.com/ppedit (pdoc from docstrings)
 - Maintainer: David P. Chassin, Eudoxys Sciences LLC
@@ -67,7 +68,7 @@ make docs
 ppedit serve ppedit/_test/data/case3.glm   # manual UI check
 ```
 
-Nothing needs network or credentials (the Claude tab needs an Anthropic
+Nothing needs network or credentials (the Agent tab needs an Anthropic
 API key to start sessions; tests use a fake client).
 
 ## Known rough edges (don't "fix" silently; mention or ask)
@@ -85,16 +86,23 @@ API key to start sessions; tests use a fake client).
   IPOPT library; CI installs it), not pypower: results are converted to
   the `runopf` layout so `Case.solve` and `printpf` read them unchanged
   (the report is printed without "f", as a PF, since cvxopf has no
-  multipliers; `lam_P`/`mu_*` are `None`). DC lines are built as
-  `HVDCLink` with `p_in = -Pf` because `cvxopf.hvdc_from_dcline` runs
-  PYPOWER DC lines backwards (as of cvxopf b6edcc7, 2026-11-12); switch
-  to it once that is fixed upstream. cvxopf solve options (decision #48)
+  multipliers; `lam_P`/`mu_*` are `None`). DC lines are built by
+  `cvxopf.hvdc_from_dcline` as fixed by cvxopf PR 32 (`p_in = -Pf`, signed
+  `dclinecost` converted, reverse or two-way lossy lines refused);
+  `_hvdc_links` probes it and refuses an older cvxopf (whose import runs
+  DC lines backwards) for cases with in-service DC lines, silences its
+  omission warning (ppedit's own notes give the details) and renumbers
+  its row numbers from 1. CI installs cvxopf at the PR 32 head commit
+  (8c40598) until PR 32 is merged; then install the main branch again. cvxopf solve options (decision #48)
   come from the Settings tab (`ppedit.cvxopf` in `localStorage`,
   `cvxopfOptions()` in `app.js`) as `options` of `/api/solve`;
   `_cvxopf.RECOMMENDED` is the per-model preparation profile from the
   cvxopf authors (issue #88) and may need revising as cvxopf changes.
   `verbose` captures file descriptors 1 and 2 while solving, so other
   threads' output in that window lands in the log too.
+  Multistep builder options (`MULTISTEP_OPTIONS`, `multistep_options`,
+  `renderMultistepSettings` in `app.js`, `multistep` of `S.cvxopf`) go only
+  with multistep solves and only to the models they apply to.
   `build_opf` gets `automatic_sparse_dispatch=True` (issue #122): without
   it cvxopf zeroes CVXPY's density threshold for AC and the solve runs 3-4x
   slower on a needlessly dense Jacobian.
@@ -209,7 +217,7 @@ API key to start sessions; tests use a fake client).
   reproduce the drawing from before the menu existed. `:flow` and
   `:loading` need a solution (greyed out until one exists). Data labels
   are not moved to avoid collisions; DC lines get none. Overlapping data
-  labels are hidden after each render (decision #60, issue #139,
+  labels are hidden after each render (decision #65, issue #139,
   `hideOverlaps`; classes `dl` hideable, `dl-fixed`/`dl-body` obstacles),
   and hovering a bus or branch shows `#net-tip` (`setupNetTip`, `busTip`,
   `branchTip`) listing only the Labels-menu items with the Settings
@@ -247,6 +255,13 @@ API key to start sessions; tests use a fake client).
   test fixtures) stays open. `serverCommand()` in `app.js` adds `--token`
   from `/api/meta`, and `ping()` reports a 403 as `{forbidden: true}`.
 
+- Displayed name (issue #135): `ppedit/_branding.py` (`APP_NAME`,
+  `APP_MARK`); `app_page` in `server.py` fills `{{APP_NAME}}`/`{{APP_BRAND}}`
+  in `index.html`, and `APP_NAME` in `app.js` (from `<meta name="app-name">`)
+  is used for every name the page shows. Use it for new user-facing text;
+  keep `ppedit` for the command (`ppedit serve`), `localStorage` keys and
+  the About dialog's copyright, license and funding rows.
+
 - Work-in-progress indicator (decision #54, `#busy`, `busyStart`/`busyEnd` in
   `app.js`): every `api()` call counts unless it passes `{ background: true }`;
   pass it for any new polling so the indicator does not stay up. Rendering
@@ -258,7 +273,22 @@ API key to start sessions; tests use a fake client).
   rows with changed bus/area numbers renumbers references (two passes via
   temporary numbers so swaps work), like cell edits do; `ncost` is never
   taken from the file. Parquet/Feather/Excel depend on optional engines
-  (CI installs `pyarrow` and `openpyxl`).
+  (CI installs `pyarrow` and `openpyxl`). Import also reads the read-only
+  pandas formats of `_FORMATS` (`writable` False; `table_read_formats`,
+  meta `table_read_formats`) when their engine is installed (CI installs
+  them; `xlwt` only writes `.xls` test files). `.xlsb` and `.sas7bdat` have
+  no Python writer, so they are untested; pyreadstat's XPORT zero reads
+  back as about 5e-79 in pandas. `make docs` runs `pip install .`, which
+  replaces an editable install: reinstall with `pip install -e .` after it.
+  `dropna` (`_dropna` in `_tableio.py`; `S.dropna`, `dropnaSelect` in
+  `app.js`) works on the plain rows after reading, with `None` as missing.
+  Row and date ranges (`_row_range`, `_date_range`) run before it, and
+  series scale/offset (`_scale`) after it; every
+  import goes through `openImportDialog(mode)` (`S.importChoice` keeps the
+  choices, `S.importReq` carries them to `importRows`/`importSeries`).
+  File choosers match only a file's last extension, so `acceptList` lists
+  compressed formats by their compression suffix (`.gz`) and
+  `fileFormatOk` checks the whole name after the pick (`pickFormats`).
 
 - Extended result columns (decision #56, issue #108): `RESULT_COLUMNS` in
   `case.py` (PYPOWER array indexes), `extended` of `Case.solve`
@@ -268,7 +298,73 @@ API key to start sessions; tests use a fake client).
   `Case.import_rows` drops columns with their names (`ignored`).
   `S.tableSort` column indexes past `COLUMNS[table]` refer to them.
 
-- Claude tab (`ppedit/claude.py`, `renderClaude` in `app.js`): sessions
+- Time series and multistep OPF (decision #60, issue #124): `Case.series`
+  (`set_series`, `_series_rekey` keeps columns valid on edits, `at_step`,
+  `_series_input`), `read_series`/`dump_series` in `_tableio.py`,
+  `/api/series*` routes, `renderSeries` and `stepView`/`setStep` in
+  `app.js`, `series` argument of `_cvxopf.runopf`. Per-step generator
+  limits are CVXPY constraints ppedit appends after `build_opf_multistep`
+  (`_gen_limits`; it replaces `build.prob`), because cvxopf has no
+  time-varying generator limits as of cvxopf fd4d279 (2026-11-18); they
+  only work with the default preparation (the prepared solve rebuilds the
+  problem). Switch to cvxopf's own input if it adds one. The diagram still
+  draws case loads for a multistep step. `Case.series` is a list of named
+  series combined by `Case.combined_series` (used by `series_values`,
+  `at_step`, `_series_input`; a column in several series is summed);
+  state `series_combined` carries its summary (with all step labels,
+  `index`) or error, and `currentSeries()`/`S.seriesName` pick the one shown.
+  Results Steps block: Data/Plot tabs (`stepsBlock`, `S.stepsTab`); the plot
+  (`stepsPlot`, `loadPlotly`, `stepsPlotEl` kept across renders for
+  `uirevision` zoom) uses the vendored Plotly basic bundle; don't edit it,
+  replace it with a newer release and update its version in DESIGN #2.
+  Multistep tab series view: Data/Plot tabs and Columns ▾ (`seriesViewBar`,
+  `S.seriesTab`, `seriesOrder` by descending column sum, `seriesShown`,
+  `S.seriesCols`, `SERIES_COLS` = 5 by default; `seriesPlot` with
+  `seriesPlotEl` kept across renders, same Plotly bundle).
+  Step controls and Copy to case (`renderSeriesStep`, `S.seriesStep`,
+  `stepTimes`, `POST /api/series/apply`, `Case.apply_step`) work on
+  combined steps; `seriesStepRow` maps the step to the shown series' row.
+  Panels (decision #61,
+  `Case.set_series_panel`, `geohash` in `case.py`, `panel` of
+  `/api/series/import`, `openPanelDialog` in `app.js`) locate elements by
+  the first geodata row of their bus and match geohash cells by prefix of a
+  12-digit geohash computed from LAT/LON (not the `GEOHASH` geodata tag some
+  examples carry). Full AC multistep memory grows
+  with the horizon inside cvxopf (case118: about 0.5 GB per step, the same
+  with or without `automatic_sparse_dispatch`; 24 steps did not fit in
+  7 GB), while the DC models are light (case118, 24 steps: about 1 s).
+
+- Storage (decision #62, issue #128): `COLUMNS["storage"]`, cascades in
+  `set_value`/`add_row`/`delete_rows`, `_dump_glm_storage` (`pp_storage`
+  runtime class), `_series_input` `storage` in `case.py`;
+  `_storage_units`/`_charge_gens`/`_storage_constraints`/`_storage_step`
+  in `_cvxopf.py` (ppedit's own model, not cvxopf's single-bus storage
+  devices: the discharge is the generator's `Pg`, the charge an added
+  generator stripped from the results); `storageBlock` in `app.js`.
+  Multistep and the default preparation only; step area totals do not
+  count charging.
+
+- Solve progress and stop (decision #63, issue #130, `ppedit/_solveproc.py`):
+  server `CVXOPF-*` solves run in a child process (`job` of `Case.solve`;
+  the test fixtures go through it too, about 1 s per solve). Progress
+  from IPOPT comes from an `intermediate` method added to CVXPY's
+  `Oracles` during the solve (`_ipopt_progress`, cvxpy 1.9 internals; it
+  stays out of the way if CVXPY ever defines one). The child's verbose
+  solver output reaches the log only when it finishes. The child runs in
+  its own session and ignores SIGINT (first statement of `_CHILD`), so
+  terminal Ctrl-C does not interrupt it; `_kill_running` (atexit) kills
+  children left when the server exits. Tests swap the
+  child code (`_solveproc._CHILD`) for a stand-in to stop or kill it.
+  `followSolve` in `app.js` polls `/api/solve/progress` with `background`
+  and sets `busy.detail`/`busy.stop`. The page's solves are background
+  solves (`runSolve`, `background: true`; `start_background_solve` in
+  `server.py` solves a deep copy in a thread without `editor.lock` and
+  keeps the result only if `editor.revision` is unchanged); one solve at a
+  time (`SolveBusy`, HTTP 409). Requests without `background` still hold
+  the lock (tests, API, `?solve=`, Agent tab).
+
+- Agent tab (formerly Claude, issue #133; view `agent`, `?view=claude` still
+  accepted; `ppedit/claude.py`, `renderClaude` in `app.js`): sessions
   call the Messages API with `urllib` (no SDK dependency) in background
   threads; each tool call that changes the case is one `Editor.edit()`
   under `editor.lock` (an `RLock`). The page polls `GET /api/claude` each
@@ -277,6 +373,12 @@ API key to start sessions; tests use a fake client).
   server-side `web_search_20250305` tool (must be enabled for the API
   organization); `fetch_url` and local file reads run in the ppedit
   server, local reads confined to the session's `root`.
+  Agent settings (decision #64, `renderAgentSettings`/`agentOptions()` in
+  `app.js`, `ppedit.agent` in `localStorage`): agent (`AGENTS`, only
+  `claude`) and API key source, sent as `agent`/`api_key`/`api_key_file`
+  of `/api/claude/new`. The key is resolved when the session starts, kept
+  in `Session._key`, and must never appear in `to_dict()`/`summary()` or
+  error messages. The routes, module and `claude-*` ids keep their names.
 
 ## Working rules
 

@@ -41,6 +41,35 @@ def test_index_has_about_dialog(client):
     assert 'id="brand"' in page and 'id="about"' in page
     assert "showAbout" in client.get("/static/app.js").get_data(as_text=True)
 
+def test_app_name_default(client):
+    """The page shows the default name ppedit, with "pp" in the accent color"""
+    page = client.get("/").get_data(as_text=True)
+    assert "{{" not in page
+    assert '<title>ppedit</title>' in page and '<meta name="app-name" content="ppedit">' in page
+    assert '<span class="mark">pp</span>edit</button>' in page and 'title="About ppedit"' in page
+    assert client.get("/api/meta").get_json()["app_name"] == "ppedit"
+
+def test_app_name_changed(client,monkeypatch):
+    """branding.APP_NAME and APP_MARK change every name the page shows (issue #135)"""
+    from ppedit import _branding as branding # pylint: disable=import-outside-toplevel
+    monkeypatch.setattr(branding,"APP_NAME","Grid <Edit>")
+    monkeypatch.setattr(branding,"APP_MARK","Grid")
+    page = client.get("/").get_data(as_text=True)
+    assert "ppedit" not in page.replace("/static/","")
+    assert '<title>Grid &lt;Edit&gt;</title>' in page
+    assert '<span class="mark">Grid</span> &lt;Edit&gt;</button>' in page
+    meta = client.get("/api/meta").get_json()
+    assert meta["app_name"] == "Grid <Edit>" and meta["about"]["copyright"]  # attribution unchanged
+    monkeypatch.setattr(branding,"APP_MARK","XY")  # not a prefix: no mark
+    assert 'aria-haspopup="dialog">Grid &lt;Edit&gt;</button>' in client.get("/").get_data(as_text=True)
+
+def test_vendored_plotly(client):
+    """Plotly is served locally (decision #2) and not loaded by the page itself"""
+    res = client.get("/static/vendor/plotly-basic.min.js")
+    assert res.status_code == 200 and b"plotly.js (basic - minified)" in res.data[:200]
+    assert "plotly" not in client.get("/").get_data(as_text=True).lower()
+    assert "/static/vendor/plotly-basic.min.js" in client.get("/static/app.js").get_data(as_text=True)
+
 def test_static_files_not_cached(client):
     """The page and its files are revalidated on every load"""
     for url in ["/","/static/app.js","/static/style.css"]:

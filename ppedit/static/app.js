@@ -1,17 +1,26 @@
 // ppedit browser editor
+// APP_NAME: the editor name shown in the page (ppedit/_branding.py; the server
+// puts it in <meta name="app-name">), used for every displayed "ppedit".
+const APP_NAME = document.querySelector('meta[name="app-name"]')?.content || "ppedit";
 "use strict";
 
 const S = {
   meta: null,          // columns, tables, builtin cases
   state: null,         // editor state from the server
   view: "network",
-  table: "bus",        // table the Tables tab opens (the one shown last)
+  table: "bus",        // table the Case tab opens (the one shown last)
   precision: null,     // decimal places by unit (set from loadPrecision below)
-  selected: { bus: new Set(), gen: new Set(), branch: new Set(), gencost: new Set(), dcline: new Set(), dclinecost: new Set(), areas: new Set() },
+  selected: { bus: new Set(), gen: new Set(), branch: new Set(), gencost: new Set(), dcline: new Set(), dclinecost: new Set(), storage: new Set(), areas: new Set() },
   filter: "",
   resSort: {},         // Results table title -> {col, dir} (see block)
   tableSort: {},       // case table -> {col, dir} (see tableOrder)
   claude: null,        // Claude sessions from /api/claude
+  step: 0,             // step of a multistep solution shown (issue #124, stepView)
+  seriesName: null,    // series shown on the Multistep tab ("" = all combined; currentSeries)
+  seriesStep: { on: false, step: 0 }, // step chosen on the Multistep tab (renderSeriesStep; combined steps from 0)
+  stepsTab: "data",    // Results Steps block: "data" (table) or "plot" (stepsPlot)
+  seriesTab: "data",   // Multistep tab series view: "data" (table) or "plot" (seriesPlot)
+  seriesCols: {},      // series name -> column names shown (seriesShown; default: the SERIES_COLS largest)
   issueOpen: null,     // message of the solver warning whose detail is open (Issues tab)
   pos: {},             // bus_i -> {x, y}
   zoom: { k: 1, x: 0, y: 0 },
@@ -45,7 +54,7 @@ const sv = (tag, attrs = {}) => {
   for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
   return el;
 };
-const TABLE_TITLES = { bus: "bus", gen: "generator", branch: "branch", gencost: "generator cost", dcline: "DC line", dclinecost: "DC line cost", areas: "area" };
+const TABLE_TITLES = { bus: "bus", gen: "generator", branch: "branch", gencost: "generator cost", dcline: "DC line", dclinecost: "DC line cost", storage: "storage", areas: "area" };
 const fmt = (v, d = 3) => (v === null || v === undefined) ? "–" : (typeof v === "number" ? v.toFixed(d) : v);
 
 // Display precision of case table values by unit (issue #70; Settings tab):
@@ -70,12 +79,63 @@ S.precision = loadPrecision();
 // installed): sent with every CVXOPF-* solve. Kept in localStorage
 // (ppedit.cvxopf), not in the case. solverOptions is the text typed, as
 // "name=value, ..." (parsed by parseSolverOptions).
-const CVXOPF_DEFAULTS = { preparation: "default", solver: "", verbose: false, solverOptions: "" };
+// multistep holds the multistep builder options (multistep of the solve
+// options, MULTISTEP_OPTIONS in _cvxopf.py), sent only with multistep solves.
+const MULTISTEP_DEFAULTS = { temporal_assembly: "vectorized", sparse_dispatch: true, enforce_branch_limits: true,
+  enforce_vset: false, init_flat: true, sparsity_tol: 0, sparse_pq: true, vectorize_pq: true, loss_weight: 1,
+  branch_limit_sentinel: 1e6 };
+const CVXOPF_DEFAULTS = { preparation: "default", solver: "", verbose: false, solverOptions: "", multistep: MULTISTEP_DEFAULTS };
 function loadCvxopf() {
-  try { return { ...CVXOPF_DEFAULTS, ...JSON.parse(localStorage.getItem("ppedit.cvxopf") || "{}") }; }
-  catch (_) { return { ...CVXOPF_DEFAULTS }; }
+  try {
+    const o = { ...CVXOPF_DEFAULTS, ...JSON.parse(localStorage.getItem("ppedit.cvxopf") || "{}") };
+    o.multistep = { ...MULTISTEP_DEFAULTS, ...(o.multistep || {}) };
+    return o;
+  }
+  catch (_) { return { ...CVXOPF_DEFAULTS, multistep: { ...MULTISTEP_DEFAULTS } }; }
 }
 S.cvxopf = loadCvxopf();
+// Missing values on import (dropna of /api/table/import and /api/series/import):
+// "" keeps them; saved in localStorage (ppedit.dropna) and sent with every import
+const DROPNA_CHOICES = [["", "Keep them"], ["rows", "Drop rows (steps) with any missing value"],
+  ["columns", "Drop columns with any missing value"], ["empty-rows", "Drop only empty rows (steps)"],
+  ["empty-columns", "Drop only empty columns"]];
+S.dropna = (() => { try { return localStorage.getItem("ppedit.dropna") || ""; } catch (_) { return ""; } })();
+function setDropna(value) {
+  S.dropna = value;
+  try { localStorage.setItem("ppedit.dropna", value); } catch (_) { /* storage unavailable */ }
+}
+function dropnaSelect(id) {
+  return h("select", { id, "aria-label": "Missing values when importing", onchange: e => { setDropna(e.target.value); if (S.view === "settings") renderSettings(); } },
+    DROPNA_CHOICES.map(([v, t]) => h("option", { value: v, selected: v === S.dropna }, t)));
+}
+// "; dropped 2 row(s) and column(s) a, b with missing values" or ""
+function droppedText(d) {
+  if (!d || (!d.rows && !d.columns.length)) return "";
+  const parts = [];
+  if (d.rows) parts.push(`${d.rows} row(s)`);
+  if (d.columns.length) parts.push(`column(s) ${d.columns.slice(0, 5).join(", ")}${d.columns.length > 5 ? ", …" : ""}`);
+  return `; dropped ${parts.join(" and ")} with missing values`;
+}
+
+// Agent settings (issue #133, decision #64; Settings tab): the agent back end
+// and where new sessions get their API key: keySource "default" (the server's
+// ANTHROPIC_API_KEY or ~/.anthropic), "text" (key typed here) or "file" (a
+// file on the server machine whose first line is the key). Kept in
+// localStorage (ppedit.agent), not in the case; sent with POST /api/claude/new.
+const AGENT_DEFAULTS = { agent: "claude", keySource: "default", key: "", keyFile: "" };
+const AGENT_NAMES = { claude: "Claude (Anthropic)" };
+function loadAgent() {
+  try { return { ...AGENT_DEFAULTS, ...JSON.parse(localStorage.getItem("ppedit.agent") || "{}") }; }
+  catch (_) { return { ...AGENT_DEFAULTS }; }
+}
+S.agent = loadAgent();
+function agentOptions() {
+  const a = S.agent, out = { agent: a.agent || "claude" };
+  if (a.keySource === "text" && a.key.trim()) out.api_key = a.key.trim();
+  else if (a.keySource === "file" && a.keyFile.trim()) out.api_key_file = a.keyFile.trim();
+  return out;
+}
+function agentHasKey() { const o = agentOptions(); return !!(o.api_key || o.api_key_file); }
 // "max_iter=500, tol=1e-8, mu_strategy=adaptive" -> {max_iter: 500, tol: 1e-8, mu_strategy: "adaptive"};
 // numbers and true/false are converted, other values stay text; throws on a malformed item
 function parseSolverOptions(text) {
@@ -88,9 +148,11 @@ function parseSolverOptions(text) {
   }
   return out;
 }
-function cvxopfOptions() {
+function cvxopfOptions(multistep = false) {
   const o = S.cvxopf;
-  return { preparation: o.preparation, solver: o.solver || null, verbose: !!o.verbose, solver_options: parseSolverOptions(o.solverOptions || "") };
+  const out = { preparation: o.preparation, solver: o.solver || null, verbose: !!o.verbose, solver_options: parseSolverOptions(o.solverOptions || "") };
+  if (multistep) out.multistep = { ...MULTISTEP_DEFAULTS, ...o.multistep };
+  return out;
 }
 function precisionKey(spec) {
   if (spec.kind !== "float") return null;
@@ -129,9 +191,12 @@ const BUSY_LABELS = [  // [path prefix, label], first match wins
   ["/api/solve", "Solving"], ["/api/open", "Opening case"], ["/api/new", "Loading case"],
   ["/api/save", "Saving"], ["/api/geodata", "Loading geodata"], ["/api/table/import", "Importing rows"],
   ["/api/table/export", "Exporting rows"], ["/api/folders", "Listing folders"], ["/api/state", "Loading"],
-  ["/api/meta", "Loading"],
+  ["/api/meta", "Loading"], ["/api/series/import", "Importing series"], ["/api/series/export", "Exporting series"],
 ];
-const busy = { items: new Map([[0, { label: "Loading", t0: performance.now() }]]), next: 1, timer: null, tick: null };
+// `busy.detail` (text after the seconds) and `busy.stop` (a function; shows
+// the Stop button) are set by the solve action from /api/solve/progress.
+const busy = { items: new Map([[0, { label: "Loading", t0: performance.now() }]]), next: 1, timer: null, tick: null,
+  detail: "", stop: null };
 function busyLabel(path) { return (BUSY_LABELS.find(([p]) => path.startsWith(p)) || [null, "Working"])[1]; }
 function busyStart(path) {
   const id = busy.next++;
@@ -153,8 +218,23 @@ function busyRefresh() {
   if (busy.timer) return;  // still within BUSY_DELAY
   const oldest = [...busy.items.values()].reduce((a, b) => (a.t0 <= b.t0 ? a : b));
   const ms = performance.now() - oldest.t0;
-  el.querySelector(".busy-text").textContent = oldest.label + "…" + (ms >= BUSY_ELAPSED ? ` ${Math.floor(ms / 1000)} s` : "");
-  el.hidden = false; document.body.classList.add("busy");
+  // the status sits at the right end of the tab bar, no wider than the space after the last tab
+  const tabs = $("#tabs").getBoundingClientRect(), text = el.querySelector(".busy-text");
+  if (tabs.height) {
+    const last = [...$("#tabs").children].reduce((r, b) => Math.max(r, b.getBoundingClientRect().right), tabs.left);
+    text.style.top = `${tabs.top + tabs.height / 2}px`;
+    text.style.maxWidth = `${Math.max(140, tabs.right - last - 40)}px`;
+  }
+  const label = el.querySelector(".busy-label");
+  label.textContent = oldest.label + "…" + (ms >= BUSY_ELAPSED ? ` ${Math.floor(ms / 1000)} s` : "")
+    + (busy.detail ? ` · ${busy.detail}` : "");
+  label.title = label.textContent;
+  const stop = el.querySelector(".busy-stop");
+  stop.hidden = !busy.stop;
+  stop.onclick = busy.stop;
+  el.hidden = false;
+  // a background solve (runSolve) leaves the page usable: no progress cursor for it alone
+  document.body.classList.toggle("busy", [...busy.items.values()].some(x => !x.background));
   if (!busy.tick) busy.tick = setInterval(busyRefresh, 1000);
 }
 
@@ -170,7 +250,7 @@ async function api(path, body, { background = false } = {}) {
     try { res = await fetch(path, opts); }
     catch (_) {  // no HTTP response at all: the server stopped or cannot be reached (#51)
       if (path !== "/api/exit") serverDown();
-      const err = new Error("The ppedit server is not responding");
+      const err = new Error(`The ${APP_NAME} server is not responding`);
       err.network = true;
       throw err;
     }
@@ -209,6 +289,7 @@ function toast(msg, error = false) {
 
 function setState(st) {
   const prev = S.state;
+  st.result = stepView(st.result);
   S.state = st;
   const c = st.case;
   // drop selections that no longer exist
@@ -239,7 +320,7 @@ function issuesFor(table) {
 
 // ---------------------------------------------------------------- chrome
 
-const SOLVING = "Solving: wait for the solver to finish";
+const SOLVING = "Solving: the page stays usable meanwhile; the result shows when the solver finishes (an edit made meanwhile discards it)";
 const OPF_NO_COST = "Run OPF is disabled: OPF needs generator cost data (gencost). "
   + "Add cost rows on the Gen costs tab or open a case that has them.";
 
@@ -254,13 +335,23 @@ function renderChrome() {
   $("#undo-btn").disabled = !st.can_undo;
   $("#redo-btn").disabled = !st.can_redo;
   const noCost = !c.tables.gencost.length;
-  const opfSolving = $("#opf-btn").classList.contains("solving");
-  $("#opf-btn").disabled = noCost || opfSolving;
-  $("#opf-wrap").title = opfSolving ? SOLVING : noCost ? OPF_NO_COST : "Run an optimal power flow: choose the solver";
+  // one solve at a time (the server refuses another): both menus wait while one runs
+  const solving = !!S.solving;
+  $("#opf-btn").disabled = noCost || solving;
+  $("#pf-btn").disabled = solving;
+  $("#opf-wrap").title = solving ? SOLVING : noCost ? OPF_NO_COST : "Run an optimal power flow: choose the solver";
   for (const el of [$("#baseMVA"), $("#version")]) {
     if (document.activeElement !== el) el.value = el.id === "baseMVA" ? c.baseMVA : c.version;
   }
   for (const t of S.meta.tables) $(`[data-count="${t}"]`).textContent = c.tables[t].length;
+  const comb = c.series_combined;
+  $("#series-count").textContent = c.series.length ? (comb && comb.steps ? comb.steps : "!") : "";
+  $$("#opf-menu [data-multistep]").forEach(b => {
+    b.disabled = !comb || !!comb.error;
+    b.title = !comb ? "Import a time series on the Multistep tab first"
+      : comb.error ? `The series cannot be combined: ${comb.error}`
+      : `Solve the ${comb.steps} steps of the ${c.series.length > 1 ? `${c.series.length} combined series` : "time series"} as one OPF`;
+  });
   // Issues tab: case issues plus the last solve's messages (issue #89); red
   // dot for errors, yellow for warnings only
   const msgs = solverMessages();
@@ -276,18 +367,22 @@ function renderChrome() {
   const dot = $("#result-dot");
   dot.className = "status-dot" + (st.result ? (st.result.success ? " ok" : " fail") : "");
   const busy = claudeBusy();
-  $("#claude-dot").className = "status-dot" + (busy ? " ok" : "");
-  $("#claude-dot").title = busy ? "Claude is working" : "";
-  document.title = `${st.dirty ? "• " : ""}${c.name} — ppedit`;
+  $("#agent-dot").className = "status-dot" + (busy ? " ok" : "");
+  $("#agent-dot").title = busy ? "An agent session is working" : "";
+  document.title = `${st.dirty ? "• " : ""}${c.name} — ${APP_NAME}`;
   const isTable = S.meta.tables.includes(S.view);
-  $$("#tabs > button").forEach(b => b.classList.toggle("active", b.dataset.view === S.view || (isTable && b.dataset.view === "tables")));
+  $$("#tabs > button").forEach(b => b.classList.toggle("active", b.dataset.view === S.view || (isTable && b.dataset.view === "case")));
   $$("#table-tabs > button").forEach(b => b.classList.toggle("active", b.dataset.view === S.view));
 }
 
-// The Tables tab opens the table shown last (S.table); the table tabs below
+// The Case tab opens the table shown last (S.table); the table tabs below
 // it pick the table. Table names stay view names (?view=bus, Issues links).
+// "tables" and "series" are former tab names, kept so ?view=tables and
+// ?view=series still work.
 function show(view) {
-  if (view === "tables") view = S.table;
+  if (view === "claude") view = "agent";  // former tab name (issue #133)
+  if (view === "series") view = "multistep";
+  if (view === "case" || view === "tables") view = S.table;
   if (S.meta.tables.includes(view)) S.table = view;
   S.view = view;
   renderChrome();
@@ -300,7 +395,8 @@ function renderView() {
   if (isTable) { $("#view-table").classList.add("active"); renderTable(S.view); }
   else if (S.view === "network") { $("#view-network").classList.add("active"); renderNetwork(); }
   else if (S.view === "results") { $("#view-results").classList.add("active"); renderResults(); }
-  else if (S.view === "claude") { $("#view-claude").classList.add("active"); renderClaude(); }
+  else if (S.view === "multistep") { $("#view-series").classList.add("active"); renderSeries(); }
+  else if (S.view === "agent") { $("#view-agent").classList.add("active"); renderClaude(); }
   else if (S.view === "settings") { $("#view-settings").classList.add("active"); renderSettings(); }
   else { $("#view-issues").classList.add("active"); renderIssues(); }
 }
@@ -325,7 +421,42 @@ function renderSettings() {
   $("#precision-settings").replaceChildren(...rows,
     h("div", { class: "hint" }, "Decimal places shown in the case tables; blank shows full precision. A value of exactly 0 shows as 0. Editing a cell shows its full value."),
     h("div", {}, h("button", { onclick: () => { S.precision = { ...PRECISION_DEFAULTS }; save(); renderSettings(); } }, "Reset to defaults")));
+  $("#import-settings").replaceChildren(
+    h("label", {}, h("span", {}, "Missing values"), dropnaSelect("dropna-setting")),
+    h("div", { class: "hint" }, "Applied when table rows, a series file or a panel are read (Import…), before the data is checked. "
+      + "“Any missing value” drops a row or column with at least one empty or NaN cell; “empty” drops only those with no value at all. "
+      + "In series files the time column is never dropped and a missing time does not count."));
   renderCvxopfSettings();
+  renderAgentSettings();
+}
+
+// Agents group (issue #133): agent back end and API key source for new sessions
+function renderAgentSettings() {
+  const a = S.agent;
+  const save = () => { try { localStorage.setItem("ppedit.agent", JSON.stringify(S.agent)); } catch (_) { /* storage unavailable */ } };
+  const set = (key, value) => { a[key] = value; save(); renderAgentSettings(); };
+  const agents = (S.claude && S.claude.agents) || Object.keys(AGENT_NAMES);
+  const agent = h("select", { "aria-label": "Agent", onchange: e => set("agent", e.target.value) },
+    ...agents.map(x => h("option", { value: x, selected: a.agent === x }, AGENT_NAMES[x] || x)));
+  const source = h("select", { "aria-label": "API key source", onchange: e => set("keySource", e.target.value) },
+    h("option", { value: "default", selected: a.keySource === "default" }, "Server default (ANTHROPIC_API_KEY or ~/.anthropic)"),
+    h("option", { value: "text", selected: a.keySource === "text" }, "Key text"),
+    h("option", { value: "file", selected: a.keySource === "file" }, "Key file on the server"));
+  const rows = [h("label", {}, h("span", {}, "Agent"), agent), h("label", {}, h("span", {}, "API key"), source)];
+  if (a.keySource === "text") {
+    rows.push(h("label", {}, h("span", {}, "Key text"), h("input", { type: "password", class: "text wide", value: a.key,
+      autocomplete: "off", spellcheck: "false", placeholder: "sk-ant-…", "aria-label": "API key text",
+      onchange: e => { a.key = e.target.value.trim(); save(); } })));
+  } else if (a.keySource === "file") {
+    rows.push(h("label", {}, h("span", {}, "Key file"), h("input", { class: "text wide", value: a.keyFile,
+      spellcheck: "false", placeholder: "e.g. ~/.anthropic-ppedit", "aria-label": "API key file on the server",
+      onchange: e => { a.keyFile = e.target.value.trim(); save(); } })));
+  }
+  $("#agent-settings").replaceChildren(...rows,
+    h("div", { class: "hint" }, "Used by new sessions in the Agent tab; running sessions keep the key they started with. "
+      + "Key text is kept in this browser's storage in plain text; a key file keeps it on the server machine "
+      + "instead (its first line is read when a session starts)."),
+    h("div", {}, h("button", { onclick: () => { S.agent = { ...AGENT_DEFAULTS }; save(); renderAgentSettings(); } }, "Reset to defaults")));
 }
 
 // cvxopf solve options group (issue #88): only when cvxopf is installed
@@ -364,10 +495,416 @@ function renderCvxopfSettings() {
       + "or IPOPT for full AC. Full AC always uses IPOPT. Solver options are name=value pairs passed "
       + "to the solver (e.g. IPOPT max_iter and tol, CLARABEL tol_gap_rel); tolerances are otherwise "
       + "the solver defaults."),
-    h("div", {}, h("button", { onclick: () => { S.cvxopf = { ...CVXOPF_DEFAULTS }; save(); renderCvxopfSettings(); } }, "Reset to defaults")));
+    h("div", {}, h("button", { onclick: () => { S.cvxopf = { ...CVXOPF_DEFAULTS, multistep: S.cvxopf.multistep }; save(); renderCvxopfSettings(); } }, "Reset to defaults")));
+  renderMultistepSettings(save);
+}
+
+// cvxopf multistep builder options (build_opf_multistep and OPFOptions;
+// MULTISTEP_OPTIONS in _cvxopf.py): used only by Run OPF ▾ > Multistep
+function renderMultistepSettings(save) {
+  const cvx = S.meta.solvers.cvxopf;
+  $("#multistep-title").hidden = $("#multistep-settings").hidden = !cvx;
+  if (!cvx) return;
+  const m = S.cvxopf.multistep;
+  const set = (key, value) => { m[key] = value; save(); renderMultistepSettings(save); };
+  const check = (key, label, models) => h("label", { title: `Applies to ${models}` },
+    h("span", {}, label), h("input", { type: "checkbox", checked: !!m[key], "aria-label": label, onchange: e => set(key, e.target.checked) }),
+    h("span", { class: "unit" }, models));
+  const num = (key, label, models, unit = "") => h("label", { title: `Applies to ${models}` },
+    h("span", {}, label),
+    h("input", { class: "num", value: String(m[key]), "aria-label": label,
+      onchange: e => { const v = Number(e.target.value); if (e.target.value.trim() !== "" && Number.isFinite(v) && v >= 0) set(key, v); else e.target.value = String(m[key]); } }),
+    h("span", { class: "unit" }, (unit ? unit + "; " : "") + models));
+  const assembly = h("select", { "aria-label": "Temporal assembly", onchange: e => set("temporal_assembly", e.target.value) },
+    h("option", { value: "vectorized", selected: m.temporal_assembly !== "stepwise" }, "Vectorized (default)"),
+    h("option", { value: "stepwise", selected: m.temporal_assembly === "stepwise" }, "Stepwise"));
+  const tolBad = m.sparsity_tol > 0 && m.enforce_branch_limits;
+  $("#multistep-settings").replaceChildren(
+    h("label", {}, h("span", {}, "Temporal assembly"), assembly, h("span", { class: "unit" }, "all models")),
+    check("sparse_dispatch", "Sparse derivatives", "AC"),
+    check("enforce_branch_limits", "Enforce branch limits", "AC, SOCP"),
+    check("enforce_vset", "Hold generator voltage setpoints", "AC, SOCP"),
+    check("init_flat", "Flat start", "AC"),
+    num("sparsity_tol", "Admittance sparsity tolerance", "AC"),
+    check("sparse_pq", "Sparse P/Q variables", "AC"),
+    check("vectorize_pq", "Batch P/Q flow definitions", "AC"),
+    num("loss_weight", "Loss weight", "DC"),
+    num("branch_limit_sentinel", "Limit for unrated branches", "DC", "MW"),
+    h("div", { class: "hint err-text" }, tolBad ? "A sparsity tolerance above 0 needs Enforce branch limits off; full AC multistep solves are refused otherwise." : ""),
+    h("div", { class: "hint" }, "Used only by the multistep CVXOPF solvers (Run OPF ▾ > Multistep), with the solve options above; "
+      + "each option goes only to the network models listed beside it. Vectorized assembly builds each constraint once for all steps; "
+      + "stepwise builds one set of variables and constraints per step (slower to build, the same solution). "
+      + "Sparse derivatives lets CVXPY use sparse Jacobians for full AC (much faster on large cases). "
+      + "Without branch limits, rateA is ignored. The loss weight scales the line loss term of the lossy DC objective; "
+      + "the unrated-branch limit replaces rateA 0 there."),
+    h("div", {}, h("button", { onclick: () => { S.cvxopf.multistep = { ...MULTISTEP_DEFAULTS }; save(); renderMultistepSettings(save); } }, "Reset to defaults")));
 }
 
 // ---------------------------------------------------------------- tables
+
+// ---------------------------------------------------------------- series
+
+// Multistep tab (issue #124): the case time series (state.case.series) of bus
+// Pd/Qd, generator and DC line Pmin/Pmax by step, used by the Run OPF ▾
+// multistep solvers. Read from a data file (one row per step), shown read only.
+const SERIES_SHOW = 500;  // most steps listed
+function seriesTitle(name) {
+  const [table, column, key] = name.split(".");
+  const c = S.state.case, unit = column === "Qd" ? "MVAr" : "MW";
+  if (table === "bus") return `bus ${key} ${column} (${unit})`;
+  const row = c.tables[table][+key - 1];
+  return `${TABLE_TITLES[table]} ${key}` + (row ? (table === "gen" ? ` at bus ${row[0]}` : ` ${row[0]}–${row[1]}`) : "") + ` ${column} (${unit})`;
+}
+// The case holds several named series (state.case.series), combined for
+// multistep OPF (state.case.series_combined: steps, aligned or error). The
+// tab shows one (S.seriesName) or, with "", the combined summary.
+function currentSeries() {
+  const all = S.state.case.series;
+  if ((S.seriesName === "" && all.length < 2) || (S.seriesName !== "" && !all.some(x => x.name === S.seriesName)))
+    S.seriesName = all.length ? all[0].name : null;
+  return all.find(x => x.name === S.seriesName) || null;
+}
+// Step controls of the Multistep tab: the Step check box turns choosing a step
+// on; the step is picked with a date/time input when every combined label is
+// a date and time (else a step number spinner) or the arrows (first, -24, -1,
+// +1, +24, last). Copy to case copies all series values of the step into the
+// case (POST /api/series/apply, Case.apply_step; undoable).
+const STEP_TIME = /^(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d)/;
+function stepTimes(comb) {
+  const keys = comb.aligned === "step" ? [] : comb.index.map(x => { const m = STEP_TIME.exec(String(x)); return m ? `${m[1]}T${m[2]}` : null; });
+  return keys.length && keys.every(x => x) ? keys : null;
+}
+// the row of series `ser` that is the chosen combined step (-1: none)
+function seriesStepRow(ser) {
+  const comb = S.state.case.series_combined, st = S.seriesStep;
+  if (!st.on || !comb || comb.error) return -1;
+  if (S.state.case.series.length < 2) return st.step;
+  const label = comb.index[st.step];
+  return comb.aligned === "time" ? ser.index.findIndex(x => String(x) === String(label)) : st.step;
+}
+function setSeriesStep(step) {
+  const comb = S.state.case.series_combined;
+  S.seriesStep.step = Math.max(0, Math.min(comb.steps - 1, step));
+  renderSeries();
+  const row = document.querySelector("#series-body tr.current");
+  if (row) row.scrollIntoView({ block: "nearest" });
+}
+function renderSeriesStep() {
+  const box = $("#series-step"), comb = S.state.case.series_combined, st = S.seriesStep;
+  box.hidden = !comb || !!comb.error;
+  if (box.hidden) return box.replaceChildren();
+  if (st.step >= comb.steps) st.step = comb.steps - 1;
+  const off = !st.on, times = stepTimes(comb), last = comb.steps - 1;
+  let input;
+  if (times) {
+    input = h("input", { type: "datetime-local", value: times[st.step], min: times[0], max: times[last], step: Math.max(60, Math.round(comb.delta * 3600)),
+      disabled: off, "aria-label": "Step date and time", onchange: e => {
+        const v = e.target.value, at = times.indexOf(v);
+        if (at >= 0) return setSeriesStep(at);
+        // no step at that time: the nearest one
+        const t = Date.parse(v);
+        if (!Number.isNaN(t)) setSeriesStep(times.reduce((b, x, i) => Math.abs(Date.parse(x) - t) < Math.abs(Date.parse(times[b]) - t) ? i : b, 0));
+        else e.target.value = times[st.step];
+      } });
+  } else {
+    input = h("input", { type: "number", class: "num", value: st.step + 1, min: 1, max: comb.steps, step: 1, disabled: off,
+      "aria-label": "Step number", onchange: e => {
+        const n = Math.round(Number(e.target.value));
+        if (Number.isFinite(n)) setSeriesStep(n - 1); else e.target.value = st.step + 1;
+      } });
+  }
+  const arrow = (text, title, to) => h("button", { class: "arrow", title, disabled: off || to === st.step, onclick: () => setSeriesStep(to) }, text);
+  box.replaceChildren(
+    h("label", { class: "inline", title: "Choose a step of the series to copy into the case" },
+      h("input", { type: "checkbox", checked: st.on, "aria-label": "Choose a step", onchange: e => { st.on = e.target.checked; renderSeries(); } }), " Step"),
+    input,
+    arrow("⏮", "First step", 0), arrow("≪", "24 steps back", Math.max(0, st.step - 24)), arrow("‹", "Previous step", Math.max(0, st.step - 1)),
+    arrow("›", "Next step", Math.min(last, st.step + 1)), arrow("≫", "24 steps forward", Math.min(last, st.step + 24)), arrow("⏭", "Last step", last),
+    h("span", { class: "step-label" }, off ? `${comb.steps} step(s)` : `step ${st.step + 1} of ${comb.steps}: ${comb.index[st.step]}`),
+    h("button", { disabled: off, title: "Copy every series value of this step (all series combined) into the case tables (Ctrl+Z to undo)",
+      onclick: () => copyStepToCase().catch(() => { /* toast already shown */ }) }, "Copy to case"));
+}
+async function copyStepToCase() {
+  const st = await act("/api/series/apply", { step: S.seriesStep.step });
+  const a = st.applied;
+  toast(`Copied step ${a.step + 1} (${a.label}) to the case: ${a.changed} value(s) changed (Ctrl+Z to undo)`);
+}
+function renderSeries() {
+  const all = S.state.case.series, comb = S.state.case.series_combined, exts = S.meta.table_formats || [];
+  renderSeriesStep();
+  const ser = currentSeries();
+  const pick = $("#series-pick");
+  pick.replaceChildren(...all.map(x => h("option", { value: x.name, selected: x === ser }, `${x.name} (${x.values.length})`)),
+    ...(all.length > 1 ? [h("option", { value: "", selected: S.seriesName === "" }, "All combined")] : []));
+  pick.disabled = !all.length;
+  const item = x => h("button", { "data-action": "series-export", "data-format": x, role: "menuitem" }, x.slice(1));
+  $("#series-export-menu").replaceChildren(h("div", { class: "sep" }, ser ? `Export ${ser.name} as` : "Export combined as"), ...exts.map(item));
+  $("#series-input").accept = acceptList(readFormats());
+  $("#series-export-btn").disabled = !all.length || (!ser && comb && !!comb.error);
+  $("#series-clear").disabled = !all.length;
+  $("#series-clear").textContent = ser ? "Remove series" : "Remove all";
+  const d = $("#series-delta");
+  d.disabled = !ser;
+  if (document.activeElement !== d) d.value = ser ? ser.delta : "";
+  $("#series-hint").replaceChildren(...(!all.length ? [] : [
+    ser ? `${ser.values.length} step(s) × ${ser.columns.length} value(s)${ser.timed ? "" : ", no time labels"}. ` : "",
+    comb.error ? h("span", { class: "err-text" }, `Multistep OPF: ${comb.error}`)
+      : `Multistep OPF uses ${comb.steps} step(s) × ${comb.columns} value(s)` + (all.length > 1 ? ` from ${all.length} series, aligned by ${comb.aligned === "time" ? "time" : "step number"}` : "")
+        + (comb.summed ? `, ${comb.summed} value(s) summed over series` : "") + `, ${comb.first} to ${comb.last}.`]));
+  const format = h("div", { class: "hint series-format" },
+    "A series file has one row per time step: an optional label column (named time, timestamp, date, step or index) ",
+    "and one column per value named table.column.key — bus.Pd.N and bus.Qd.N for bus number N, gen.Pmin.N and gen.Pmax.N ",
+    "for generator row N, dcline.Pmin.N and dcline.Pmax.N for DC line row N (rows counted from 1). Values not in the file keep ",
+    "their case values at every step. Import ▾ › Panel… reads instead a file with one column per table row number or geohash cell, ",
+    "all for one value chosen in its dialog (e.g. bus Pd). Run OPF ▾ › Multistep OPF solves all steps as one cvxopf problem; the Results tab then shows one step at a time. ",
+    "A case holds several series (one per import, named after the file unless named in the dialog); multistep OPF combines them: by time when all have a time column, ",
+    "else step by step (same number of steps). A value given by several series is their sum (it replaces the case value). The series are saved with .py and .json cases (not .glm).");
+  if (!all.length) {
+    $("#series-body").replaceChildren(h("div", { class: "empty" }, h("div", { class: "big" }, "No time series"),
+      exts.length ? "Import a CSV, Excel or other data file with the values by step." : TABLE_IO_NONE), format);
+    return;
+  }
+  if (!ser) {
+    $("#series-body").replaceChildren(format, h("div", { class: "table-wrap" }, h("table", { class: "series-table" },
+      h("thead", {}, h("tr", {}, ...["series", "steps", "values", "time labels", "first", "last", "h per step"].map(x => h("th", {}, x)))),
+      h("tbody", {}, all.map(x => h("tr", {}, h("td", {}, x.name), h("td", {}, x.values.length), h("td", {}, x.columns.length),
+        h("td", {}, x.timed ? "yes" : "no"), h("td", {}, x.index[0]), h("td", {}, x.index[x.index.length - 1]), h("td", {}, x.delta)))))));
+    return;
+  }
+  const shown = seriesShown(ser), bar = seriesViewBar(ser, shown);
+  if (S.seriesTab === "plot") {
+    $("#series-body").replaceChildren(format, bar, seriesPlot(ser, shown));
+    return;
+  }
+  const cur = seriesStepRow(ser);
+  const rows = ser.values.slice(0, SERIES_SHOW).map((v, t) => h("tr", t === cur ? { class: "current" } : {}, h("td", { class: "rowhead" }, t + 1),
+    h("td", {}, ser.index[t]), ...shown.map(j => h("td", { class: "num" }, fmt(v[j], S.precision.MW ?? 6)))));
+  $("#series-body").replaceChildren(format, bar, h("div", { class: "table-wrap" }, h("table", { class: "series-table" },
+    h("thead", {}, h("tr", {}, h("th", { class: "rowhead" }, "#"), h("th", {}, "time"),
+      ...shown.map(j => h("th", { title: seriesTitle(ser.columns[j]) }, ser.columns[j])))),
+    h("tbody", {}, rows))),
+    ...(ser.values.length > SERIES_SHOW ? [h("div", { class: "hint" }, `First ${SERIES_SHOW} of ${ser.values.length} steps shown; export the series to see them all.`)] : []));
+}
+// Columns of a series in descending order of their sum over the steps (the
+// column chooser's order); cached per series object.
+const SERIES_COLS = 5;  // columns shown by default: the largest by sum
+const seriesOrderCache = new WeakMap();
+function seriesOrder(ser) {
+  let order = seriesOrderCache.get(ser);
+  if (!order) {
+    const sums = ser.columns.map((_, j) => ser.values.reduce((a, v) => a + (Number.isFinite(v[j]) ? v[j] : 0), 0));
+    order = ser.columns.map((_, j) => j).sort((a, b) => sums[b] - sums[a] || a - b);
+    order.sums = sums;
+    seriesOrderCache.set(ser, order);
+  }
+  return order;
+}
+// indexes of the columns shown (S.seriesCols, in chooser order), default the SERIES_COLS largest
+function seriesShown(ser) {
+  const order = seriesOrder(ser), chosen = S.seriesCols[ser.name];
+  if (!chosen) return order.slice(0, SERIES_COLS);
+  const set = new Set(chosen);
+  return order.filter(j => set.has(ser.columns[j]));
+}
+function setSeriesCols(ser, cols) { S.seriesCols[ser.name] = cols; renderSeries(); }
+// Data/Plot tabs and the Columns ▾ chooser (check boxes in descending order of sum)
+function seriesViewBar(ser, shown) {
+  const tab = (key, text) => h("button", { role: "tab", class: "steps-tab" + (S.seriesTab === key ? " active" : ""),
+    "aria-selected": String(S.seriesTab === key), onclick: () => { S.seriesTab = key; renderSeries(); } }, text);
+  const order = seriesOrder(ser), on = new Set(shown.map(j => ser.columns[j]));
+  const wasOpen = $("#series-cols-menu")?.classList.contains("open");
+  const pick = cols => setSeriesCols(ser, cols);
+  const menu = h("div", { id: "series-cols-menu", class: "dropdown left series-cols" + (wasOpen ? " open" : ""), role: "menu" },
+    h("div", { class: "series-cols-actions" },
+      h("button", { onclick: () => pick(order.slice(0, SERIES_COLS).map(j => ser.columns[j])) }, `Largest ${SERIES_COLS}`),
+      h("button", { onclick: () => pick(ser.columns.slice()) }, "All"),
+      h("button", { onclick: () => pick([]) }, "None")),
+    h("div", { class: "sep" }, "By sum over the steps, largest first"),
+    h("div", { class: "series-cols-list" }, order.map(j => h("label", { title: seriesTitle(ser.columns[j]) },
+      h("input", { type: "checkbox", checked: on.has(ser.columns[j]), onchange: e => {
+        const cols = order.map(k => ser.columns[k]).filter(n => n === ser.columns[j] ? e.target.checked : on.has(n));
+        pick(cols);
+      } }), ` ${ser.columns[j]}`, h("span", { class: "unit" }, fmt(order.sums[j], 1))))));
+  return h("div", { class: "series-view-bar" },
+    h("div", { class: "steps-tabs", role: "tablist", "aria-label": "Series view" }, tab("data", "Data"), tab("plot", "Plot")),
+    h("div", { class: "menu" }, h("button", { "data-menu": "series-cols-menu", title: "Choose the columns shown in the table and the plot" },
+      `Columns (${shown.length} of ${ser.columns.length}) ▾`), menu));
+}
+// Plot of the shown columns of `ser` over its steps (vendored Plotly, as the
+// Results step plot): zoom kept per series (uirevision); a click on a point
+// chooses that step for Copy to case (renderSeriesStep).
+const seriesPlotEl = h("div", { id: "series-plot", class: "steps-plot" });
+function seriesPlot(ser, shown) {
+  const times = ser.index.map(x => { const m = STEP_TIME.exec(String(x)); return m ? `${m[1]} ${m[2]}` : null; });
+  const date = ser.timed && times.every(x => x), x = date ? times : ser.index.map((_, i) => i + 1);
+  const traces = shown.map(j => ({ type: "scatter", mode: ser.values.length > 400 ? "lines" : "lines+markers",
+    marker: { size: 3 }, name: ser.columns[j], x, y: ser.values.map(v => v[j]) }));
+  const row = seriesStepRow(ser);
+  const units = [...new Set(shown.map(j => (ser.columns[j].split(".")[1] === "Qd" ? "MVAr" : "MW")))].join(", ");
+  const layout = { uirevision: `series:${ser.name}`, height: 420, margin: { l: 60, r: 20, t: 10, b: 50 },
+    hovermode: "x unified", legend: { orientation: "h", y: -0.2 },
+    xaxis: { title: { text: date ? "time" : "step" }, type: date ? "date" : "linear" },
+    yaxis: { title: { text: units || "value" } },
+    shapes: row >= 0 ? [{ type: "line", xref: "x", yref: "paper", x0: x[row], x1: x[row], y0: 0, y1: 1, line: { color: "#c47f17", width: 1.5, dash: "dot" } }] : [] };
+  const name = `${(S.state.case.name || "case").replace(/[^\w.-]+/g, "_")}_${ser.name.replace(/[^\w.-]+/g, "_")}`;
+  const config = { responsive: true, displaylogo: false, scrollZoom: true, showSendToCloud: false,
+    modeBarButtonsToRemove: ["sendDataToCloud", "select2d", "lasso2d"], toImageButtonOptions: { format: "png", filename: name, scale: 2 } };
+  seriesPlotEl.dataset.series = ser.name;
+  loadPlotly().then(P => {
+    P.react(seriesPlotEl, traces, layout, config);
+    if (!seriesPlotEl.dataset.bound) {  // a click on a point chooses that step (Step check box on)
+      seriesPlotEl.dataset.bound = "1";
+      seriesPlotEl.on("plotly_click", ev => {
+        const p = ev.points && ev.points[0], cur = currentSeries();
+        if (!p || !cur) return;
+        const comb = S.state.case.series_combined;
+        const at = S.state.case.series.length < 2 ? p.pointIndex : comb.index.findIndex(l => String(l) === String(cur.index[p.pointIndex]));
+        if (at < 0) return toast("That step is not in the combined series", true);
+        S.seriesStep.on = true;
+        setSeriesStep(at);
+      });
+    }
+  }).catch(err => { seriesPlotEl.replaceChildren(h("div", { class: "empty" }, `No plot: ${err.message}`)); });
+  return h("div", { class: "steps-plot-wrap series-plot-wrap" }, shown.length ? seriesPlotEl : h("div", { class: "empty" }, "No columns chosen: use Columns ▾."),
+    h("div", { class: "hint" }, "Drag to zoom, double-click to reset; the toolbar pans, zooms and saves the plot as a PNG. Click a point to choose that step (for Copy to case). Click a legend entry to hide or show it."));
+}
+async function importSeries(file) {
+  const data = await fileBase64(file), opt = S.importReq || {}, panel = opt.panel;
+  S.importReq = null;
+  const req = { filename: file.name, data, dropna: S.dropna, range: opt.range || "", start: opt.start || "", end: opt.end || "",
+    scale: opt.scale || "", offset: opt.offset || "", name: opt.name || "" };
+  if (panel) req.panel = panel;
+  const st = await act("/api/series/import", req);
+  const im = st.imported;
+  S.seriesName = im.name;
+  renderSeries();
+  const scaled = im.scaled ? `; values × ${im.scaled.scale} + ${im.scaled.offset}` : "";
+  if (!panel) return toast(`${im.replaced ? "Replaced" : "Added"} series ${im.name}: ${im.steps} step(s) of ${im.columns} value(s) from ${file.name}${selectedText(im.selected)}${droppedText(im.dropped)}${scaled} (Ctrl+Z to undo)`);
+  const extra = selectedText(im.selected) + droppedText(im.dropped) + scaled + (im.ignored.length ? `; ${im.ignored.length} cell(s) with no ${panel.table} ignored (${im.ignored.slice(0, 5).join(", ")}${im.ignored.length > 5 ? ", …" : ""})` : "")
+    + (im.unlocated ? `; ${im.unlocated} ${panel.table} row(s) without geodata left out` : "");
+  toast(`Read ${panel.table} ${panel.column} for ${im.steps} step(s) from ${im.keys} column(s) of ${file.name} into series ${im.name} (${im.columns} value(s))${extra} (Ctrl+Z to undo)`);
+}
+
+// file extensions the server reads (table and series import), compressed forms included
+function readFormats() {
+  return S.meta.table_read_formats || S.meta.table_formats || [];
+}
+// The `accept` list of a file chooser for the extensions `formats`. Browser
+// file choosers match only a file's last extension (".csv.gz" never matches,
+// so compressed files were greyed out), so a compressed format is listed by
+// its compression suffix (".gz"); `fileFormatOk` then checks the full name.
+function acceptList(formats) {
+  return [...new Set(formats.map(x => x.split(".").length > 2 ? "." + x.split(".").pop() : x))].join(",");
+}
+// true when `name` ends with one of the extensions `formats` (case ignored)
+function fileFormatOk(name, formats) {
+  const n = name.toLowerCase();
+  return !formats.length || formats.some(x => n.endsWith(x.toLowerCase()));
+}
+// the formats the file chooser was last opened for, checked on change
+const pickFormats = { table: null, series: null };
+const TABLE_FORMAT_NAMES = {
+  ".csv": "comma-separated", ".tsv": "tab-separated", ".json": "JSON records", ".jsonl": "JSON lines", ".ndjson": "JSON lines",
+  ".parquet": "Parquet", ".feather": "Feather", ".orc": "ORC", ".xlsx": "Excel", ".xlsm": "Excel with macros", ".xls": "Excel 97-2003",
+  ".xlsb": "Excel binary", ".ods": "OpenDocument", ".xml": "XML", ".html": "HTML table", ".htm": "HTML table", ".fwf": "fixed-width text",
+  ".h5": "HDF5", ".hdf5": "HDF5", ".hdf": "HDF5", ".dta": "Stata", ".sas7bdat": "SAS", ".xpt": "SAS transport", ".sav": "SPSS",
+};
+
+// Import dialog for table rows ("table"), series files ("series") and panels
+// ("panel"; Case.set_series_panel: steps in rows, one column per row number
+// or geohash cell, all giving the chosen table value). Shared choices: file
+// format (the file chooser's filter), missing values (S.dropna) and a row
+// range; series and panels also take a date range of the time column. The
+// choices are kept in S.importChoice; S.importReq holds them until the file
+// is picked.
+const IMPORT_TITLES = { table: "Import table rows", series: "Import a series file", panel: "Import a panel" };
+function openImportDialog(mode) {
+  const d = $("#panel-dialog"), ser = S.state.case.series, prev = S.importChoice || {};
+  const tables = { bus: ["Pd", "Qd"], gen: ["Pmin", "Pmax"], dcline: ["Pmin", "Pmax"] };
+  const sel = (id, opts, value) => h("select", { id }, opts.map(([v, t]) => h("option", { value: v, selected: v === value }, t)));
+  const table = sel("panel-table", Object.keys(tables).map(t => [t, TABLE_TITLES[t]]), prev.table || "bus");
+  const column = h("select", { id: "panel-column" });
+  const fill = () => column.replaceChildren(...tables[table.value].map(c => h("option", { value: c, selected: c === prev.column }, c)));
+  table.addEventListener("change", fill); fill();
+  const keys = sel("panel-keys", [["auto", "Automatic (digits: rows)"], ["row", "Row numbers (from 1)"], ["geohash", "Geohashes"]], prev.keys || "auto");
+  const split = sel("panel-split", [["proportional", "In proportion to case values"], ["equal", "Equally"], ["copy", "Whole value to each"]], prev.split || "proportional");
+  const merge = h("input", { type: "checkbox", id: "panel-merge", checked: prev.merge ?? true });
+  // file format: limits the file chooser to one format (and its compressed forms)
+  // csv and tsv also list each compressed form (csv.gz, tsv.zip, ...) as a choice of its own
+  const ZIP = { ".gz": "gzip", ".bz2": "bzip2", ".xz": "xz", ".zip": "zip", ".zst": "zstd" };
+  const listed = readFormats().filter(x => x.split(".").length === 2 || /^\.(csv|tsv)\./.test(x));
+  const named = x => {
+    const [base, zip] = [x.replace(/(\.[^.]+)$/, m => ZIP[m] && x.split(".").length > 2 ? "" : m), x.match(/\.[^.]+$/)[0]];
+    const name = TABLE_FORMAT_NAMES[base] || "";
+    return `${x.slice(1)}${name || base !== x ? ` (${[name, base !== x ? `${ZIP[zip]} compressed` : ""].filter(Boolean).join(", ")})` : ""}`;
+  };
+  const format = sel("panel-format", [["", "Any supported format"], ...listed.map(x => [x, named(x)])],
+    listed.includes(prev.format) ? prev.format : "");
+  const text = (id, value, placeholder) => h("input", { id, class: "text", value: value || "", placeholder, spellcheck: "false" });
+  const range = text("import-range", prev.range, "all, or e.g. 1-24, 25-, -100");
+  const start = text("import-start", prev.start, "e.g. 2026-07-01 or 2026-07-01 06:00");
+  const end = text("import-end", prev.end, "e.g. 2026-07-07 (whole day)");
+  const sname = text("import-name", mode === "panel" ? (S.seriesName || prev.panelName || "") : "", "the file name");
+  const scale = h("input", { id: "import-scale", class: "num", value: prev.scale ?? "", placeholder: "1", size: 10, "aria-label": "Scale" });
+  const offset = h("input", { id: "import-offset", class: "num", value: prev.offset ?? "", placeholder: "0", size: 10, "aria-label": "Offset" });
+  const label = (txt, el, hint) => h("label", { class: "panel-row" }, h("span", {}, txt), el, hint ? h("span", { class: "hint" }, hint) : null);
+  const go = h("button", { class: "primary", onclick: () => {
+    const c = S.importChoice = { ...prev, format: format.value, range: range.value.trim() };
+    if (mode !== "table") Object.assign(c, { start: start.value.trim(), end: end.value.trim(), scale: scale.value.trim(), offset: offset.value.trim() });
+    if (mode === "panel") Object.assign(c, { table: table.value, column: column.value, keys: keys.value, split: split.value, panelName: sname.value.trim() });
+    c.merge = merge.checked;
+    S.importReq = { mode, range: c.range, start: mode === "table" ? "" : c.start, end: mode === "table" ? "" : c.end,
+      scale: mode === "table" ? "" : c.scale, offset: mode === "table" ? "" : c.offset, name: mode === "table" ? "" : sname.value.trim(),
+      panel: mode === "panel" ? { table: c.table, column: c.column, keys: c.keys, split: c.split, merge: merge.checked } : null };
+    d.close();
+    const input = $(mode === "table" ? "#table-input" : "#series-input");
+    // a base format admits its compressed forms too; a compressed choice only itself
+    const formats = format.value ? readFormats().filter(x => x === format.value
+      || (format.value.split(".").length === 2 && x.startsWith(format.value + ".")))
+      : readFormats();
+    input.accept = acceptList(formats);
+    pickFormats[mode === "table" ? "table" : "series"] = formats;
+    input.click();
+  } }, "Choose file…");
+  const what = mode === "table" ? (S.selected[S.view]?.size
+      ? `The rows read replace the ${S.selected[S.view].size} selected ${TABLE_TITLES[S.view]} row(s) (same number of rows).`
+      : `The rows read are appended to the ${TABLE_TITLES[S.view]} table; columns are named as in its header.`)
+    : mode === "series" ? "A series file has one row per time step (an optional time column first) and one column per value named table.column.key (e.g. bus.Pd.5). It replaces the current series."
+    : "A panel file has one row per time step (an optional time column first) and one column per table row number (counted from 1; for buses the row, not the bus number) or geohash cell. Every column gives the value chosen here.";
+  d.replaceChildren(h("h2", { id: "panel-title" }, IMPORT_TITLES[mode]), h("p", { class: "summary" }, what),
+    ...(mode !== "table" ? [label("Series name", sname, mode === "panel" ? "the series written (blank: the file name); with the box below checked, the panel is added to it if it exists"
+      : "added, or replacing the series of that name (blank: the file name)")] : []),
+    ...(mode === "panel" ? [label("Table", table), label("Value", column), label("Columns are", keys),
+      label("Share a geohash cell", split, "among the elements located in it (by bus geodata)")] : []),
+    label("File format", format, "the formats the server can read; the file chooser shows only the one chosen"),
+    label("Rows", range, "data rows to read, counted from 1 after the header (blank: all)"),
+    ...(mode !== "table" ? [label("From", start), label("To", end, "steps whose time lies in this range, inclusive (blank: no limit); needs a time column of dates"),
+      label("Scale", scale), label("Offset", offset, "each value read becomes value × scale + offset (e.g. scale 0.001 for kW to MW)"
+        + (mode === "panel" ? "; applied before a geohash cell is shared" : ""))] : []),
+    label("Missing values", dropnaSelect("panel-dropna"), "dropped when the file is read (also on the Settings tab)"),
+    ...(mode === "panel" ? [label("Add to the series if it exists", merge, "same number of steps; replaces this value for the elements in the panel")] : []),
+    h("div", { class: "close-row" }, h("button", { onclick: () => d.close() }, "Cancel"), go));
+  d.showModal();
+  go.focus();
+}
+// "; rows 1-24 of 8760 read" style note, or ""
+function selectedText(sel) {
+  return sel ? `; ${sel.rows} of ${sel.of} row(s) selected` : "";
+}
+async function exportSeries(ext) {
+  const id = busyStart("/api/series/export");
+  try {
+    const q = { format: ext.replace(/^\./, "") };
+    if (S.seriesName) q.name = S.seriesName;
+    const res = await fetch("/api/series/export?" + new URLSearchParams(q));
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+    const name = ((res.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/) || [])[1] || "series" + ext;
+    const url = URL.createObjectURL(await res.blob());
+    const a = h("a", { href: url, download: name });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (err) { toast(err.message, true); } finally { busyEnd(id); }
+}
 
 function cellEditor(table, row, col, value) {
   const spec = S.meta.columns[table][col];
@@ -392,6 +929,10 @@ function rowLabel(table, i) {
   if (table === "dclinecost") {
     const d = t.dcline[i];
     return `dcline ${i + 1}${d ? ` ${d[0]}→${d[1]}` : ""}`;
+  }
+  if (table === "storage") {
+    const s = t.storage[i], g = s && t.gen[s[0] - 1];
+    return `${i + 1}${g ? ` gen ${s[0]} @${g[0]}` : ""}`;
   }
   return `${i + 1}`;
 }
@@ -513,7 +1054,7 @@ function updateTableHint() {
   $("#import-btn").disabled = $("#export-btn").disabled = none;
   $("#import-btn").title = none ? TABLE_IO_NONE : n
     ? `Replace the ${n} selected row(s) with the rows of a data file (same columns, same number of rows)`
-    : "Append the rows of a data file (CSV, Parquet, Excel, …; columns named as in this table)";
+    : `Append the rows of a data file (${(S.meta.table_read_formats || []).filter(x => x.split(".").length === 2).map(x => x.slice(1)).join(", ")}; columns named as in this table)`;
   $("#export-btn").title = none ? TABLE_IO_NONE : (n ? `Download the ${n} selected row(s) as a data file` : "Download all rows as a data file")
     + (extendedColumns(t).cols.length ? ", with the solution columns shown" : "");
   const head = $("#export-menu .sep");
@@ -599,7 +1140,7 @@ function renderExportMenu() {
   $("#export-menu").replaceChildren(h("div", { class: "sep" }, "Export as"),
     ...exts.filter(x => x.split(".").length === 2).map(x => h("div", { class: "fmt" }, item(x, x.slice(1)),
       ...exts.filter(y => y.startsWith(x + ".")).map(y => item(y, y.slice(x.length), `${y.slice(1)} (compressed)`)))));
-  $("#table-input").accept = exts.join(",");
+  $("#table-input").accept = acceptList(S.meta.table_read_formats || exts);
 }
 
 function fileBase64(file) {
@@ -615,10 +1156,12 @@ async function importRows(file) {
   const table = S.view;
   const rows = [...S.selected[table]].sort((a, b) => a - b);
   const data = await fileBase64(file);
-  const st = await act("/api/table/import", { table, filename: file.name, data, rows });
+  const opt = S.importReq || {};
+  S.importReq = null;
+  const st = await act("/api/table/import", { table, filename: file.name, data, rows, dropna: S.dropna, range: opt.range || "" });
   const r = st.imported, what = TABLE_TITLES[table];
   // solution columns written by export (decision #56) are not case data
-  const ign = r.ignored && r.ignored.length ? `; solution column(s) ${r.ignored.join(", ")} ignored` : "";
+  const ign = (r.ignored && r.ignored.length ? `; solution column(s) ${r.ignored.join(", ")} ignored` : "") + selectedText(r.selected) + droppedText(r.dropped);
   if (r.added) {
     toast(`Appended ${r.added} ${what} row(s) from ${file.name}${ign} (Ctrl+Z to undo)`);
     flashRow(S.state.case.tables[table].length - 1);
@@ -2324,7 +2867,7 @@ async function fetchBounds(name, box, res, want) {
     Object.assign(b, { g, box, res, origin: [ox, oy] });
     scheduleRender();
   } catch (err) {
-    if (err.name !== "AbortError") console.warn(`ppedit: ${name} boundaries unavailable: ${err.message}`);
+    if (err.name !== "AbortError") console.warn(`${APP_NAME}: ${name} boundaries unavailable: ${err.message}`);
   }
 }
 
@@ -2651,8 +3194,15 @@ function renderInspector() {
     if (rg) kids.push(h("div", { class: "sub" }, `Solution: Pg ${fmt(rg.Pg, 2)} MW, Qg ${fmt(rg.Qg, 2)} MVAr`));
     kids.push(h("dl", {}, cols.map((_, k) => k).flatMap(field)));
     const cost = c.tables.gencost[index];
+    const store = c.tables.storage.findIndex(s => s[0] === index + 1);
+    if (store >= 0) {
+      const s = c.tables.storage[store];
+      kids.push(h("div", { class: "sub" }, `Discharges storage ${store + 1}: ${fmt(s[4], 1)} MWh, ${fmt(s[5], 1)} MVA, charging `
+        + (s[1] === -1 ? "through this generator" : `at bus ${s[1]}`) + (s[11] ? "" : " · out of service")));
+    }
     kids.push(h("div", { class: "btns" }, h("button", { onclick: () => goto("gen", index) }, "Show in table"),
-      cost ? h("button", { onclick: () => goto("gencost", index) }, "Show cost") : null));
+      cost ? h("button", { onclick: () => goto("gencost", index) }, "Show cost") : null,
+      store >= 0 ? h("button", { onclick: () => goto("storage", store) }, "Show storage") : null));
   } else if (kind === "areas") {
     const num = row[0], t = areaTotals(num), sol = t.solved;
     const bi = c.tables.bus.findIndex(b => b[0] === row[1]);
@@ -2820,7 +3370,7 @@ function sourceReport() {
   if (!src) return null;
   const fmtName = (FORMAT_NAMES[src.format] || src.format) + (src.revision ? `, revision ${src.revision}` : "");
   const names = { bus: "buses", gen: "generators", branch: "branches", gencost: "generator costs",
-    dcline: "DC lines", dclinecost: "DC line costs", areas: "areas" };
+    dcline: "DC lines", dclinecost: "DC line costs", storage: "storage units", areas: "areas" };
   const rows = S.meta.tables.filter(t => src.size[t]).map(t => `${src.size[t]} ${names[t] || t}`).join(", ") || "no rows";
   return h("div", { class: "res-block source-report" },
     h("h3", {}, `Opened ${src.file}`),
@@ -2828,6 +3378,132 @@ function sourceReport() {
     src.notes.length
       ? h("ul", { class: "source-notes" }, src.notes.map(n => h("li", {}, n)))
       : h("div", { class: "hint" }, "Everything in the file was read."));
+}
+
+// A multistep solution (result.steps, issue #124) is shown one step at a time:
+// the step's rows replace the first step's, so the diagram, tables and
+// Results tab all show S.step. `base` keeps the whole solution.
+// a multistep result with steps to show (a failed multistep solve has none)
+function hasSteps(r) {
+  return !!(r && r.multistep && r.steps && r.steps.length);
+}
+function stepView(r) {
+  if (!r || !hasSteps(r.base || r)) return r;
+  const base = r.base || r, n = base.steps.length;
+  const k = S.step = Math.max(0, Math.min(n - 1, S.step));
+  return { ...base, ...base.steps[k], base, step: k, stepLog: base.steps[k].log, log: base.log };
+}
+function setStep(k) {
+  S.step = k;
+  S.state.result = stepView(S.state.result);
+  renderView();
+}
+function stepPicker(r) {
+  const n = r.steps.length, m = r.multistep;
+  const sel = h("select", { "aria-label": "Time step shown", onchange: e => setStep(+e.target.value) },
+    r.steps.map((s, i) => h("option", { value: i, selected: i === r.step }, `${i + 1}: ${s.label}`)));
+  return h("div", { class: "step-picker" },
+    h("span", {}, "Step"),
+    h("button", { title: "Previous step", disabled: r.step === 0, onclick: () => setStep(r.step - 1) }, "◀"),
+    sel,
+    h("button", { title: "Next step", disabled: r.step === n - 1, onclick: () => setStep(r.step + 1) }, "▶"),
+    h("span", { class: "hint" }, `of ${n}, ${m.delta} h each; the diagram and table solution columns show this step (loads drawn on the diagram are the case values; see the Multistep tab)`));
+}
+function stepTable(r) {
+  // with modeled storage: net storage output (discharge - charge) and energy stored at the step's end
+  const stores = r.steps.some(s => (s.storage || []).some(x => x.solved));
+  const rows = r.steps.map((s, i) => {
+    const pg = s.gen.reduce((a, g) => a + g.Pg, 0), pd = (s.areas || []).reduce((a, x) => a + x.Pd, 0);
+    const st = (s.storage || []).filter(x => x.solved);
+    return [i + 1, s.label, fmt(s.objective, 2), fmt(pg, 2), fmt(pd, 2), fmt(s.losses_MW, 2)]
+      .concat(stores ? [fmt(st.reduce((a, x) => a + x.Pdis - x.Pch, 0), 2), fmt(st.reduce((a, x) => a + (x.E ?? 0), 0), 2)] : []);
+  });
+  const head = ["step", "time", "cost $/h", "Pg MW", "Pd MW", "loss MW"].concat(stores ? ["storage MW", "stored MWh"] : []);
+  return block("Steps", head, rows, r.steps.map((_, i) => i === r.step ? Array(head.length).fill("current") : []), "wide");
+}
+// Steps block of a multistep result: a tab bar picks the table (stepTable) or
+// an interactive time-series plot of the same columns (stepsPlot, Plotly).
+function stepsBlock(r) {
+  const tab = (key, text) => h("button", { role: "tab", class: "steps-tab" + (S.stepsTab === key ? " active" : ""),
+    "aria-selected": String(S.stepsTab === key), onclick: () => { S.stepsTab = key; renderView(); } }, text);
+  const bar = h("div", { class: "steps-tabs", role: "tablist", "aria-label": "Steps view" }, tab("data", "Data"), tab("plot", "Plot"));
+  if (S.stepsTab !== "plot") {
+    const table = stepTable(r);
+    table.querySelector("h3").append(bar);
+    return table;
+  }
+  return h("div", { class: "res-block wide" }, h("h3", {}, "Steps", bar), stepsPlot(r));
+}
+// Plotly is vendored (ppedit/static/vendor, decision #2) and loaded on first use
+let plotlyLoad = null;
+function loadPlotly() {
+  if (window.Plotly) return Promise.resolve(window.Plotly);
+  plotlyLoad = plotlyLoad || new Promise((ok, fail) => {
+    const s = document.createElement("script");
+    s.src = "/static/vendor/plotly-basic.min.js";
+    s.onload = () => ok(window.Plotly);
+    s.onerror = () => { plotlyLoad = null; fail(new Error("could not load the plotting library")); };
+    document.head.append(s);
+  });
+  return plotlyLoad;
+}
+// x values of the steps: times when every label starts with a date and time
+// (STEP_TIME; the UTC offset is dropped, so times show as labelled), else numbers
+function stepAxis(r) {
+  const times = r.steps.map(s => { const m = STEP_TIME.exec(String(s.label)); return m ? `${m[1]} ${m[2]}` : null; });
+  return times.every(x => x) ? { x: times, title: "time", date: true } : { x: r.steps.map((_, i) => i + 1), title: "step", date: false };
+}
+// The plot element is kept across renders so Plotly.react keeps the zoom
+// (uirevision) when the step or the result changes.
+const stepsPlotEl = h("div", { id: "steps-plot", class: "steps-plot" });
+function stepsPlot(r) {
+  const ax = stepAxis(r), stores = r.steps.some(s => (s.storage || []).some(x => x.solved));
+  const sum = (s, f) => s.reduce((a, x) => a + f(x), 0);
+  const line = (name, y, extra = {}) => ({ type: "scatter", mode: "lines+markers", marker: { size: 4 }, name, x: ax.x, y, ...extra });
+  const traces = [
+    line("Pg MW", r.steps.map(s => sum(s.gen, g => g.Pg))),
+    line("Pd MW", r.steps.map(s => sum(s.areas || [], a => a.Pd))),
+    line("loss MW", r.steps.map(s => s.losses_MW)),
+    ...(stores ? [line("storage MW", r.steps.map(s => sum((s.storage || []).filter(x => x.solved), x => x.Pdis - x.Pch)))] : []),
+    line("cost $/h", r.steps.map(s => s.objective), { yaxis: "y2", line: { dash: "dot" } }),
+    ...(stores ? [line("stored MWh", r.steps.map(s => sum((s.storage || []).filter(x => x.solved), x => x.E ?? 0)), { yaxis: "y3", line: { dash: "dash" } })] : []),
+  ];
+  const cur = ax.x[r.step];
+  const layout = {
+    uirevision: "steps", height: 380, margin: { l: 60, r: stores ? 110 : 60, t: 10, b: 50 },
+    hovermode: "x unified", legend: { orientation: "h", y: -0.2 },
+    xaxis: { title: { text: ax.title }, type: ax.date ? "date" : "linear", domain: [0, stores ? 0.9 : 1] },
+    yaxis: { title: { text: "MW" }, zeroline: true },
+    yaxis2: { title: { text: "$/h" }, overlaying: "y", side: "right", showgrid: false },
+    ...(stores ? { yaxis3: { title: { text: "MWh" }, overlaying: "y", side: "right", anchor: "free", position: 1, showgrid: false } } : {}),
+    shapes: [{ type: "line", xref: "x", yref: "paper", x0: cur, x1: cur, y0: 0, y1: 1, line: { color: "#c47f17", width: 1.5, dash: "dot" } }],
+  };
+  const name = (S.state.case.name || "case").replace(/[^\w.-]+/g, "_");
+  // no "Share chart" (it uploads the data to Chart Studio) and no selection tools
+  const config = { responsive: true, displaylogo: false, scrollZoom: true, showSendToCloud: false,
+    modeBarButtonsToRemove: ["sendDataToCloud", "select2d", "lasso2d"],
+    toImageButtonOptions: { format: "png", filename: `${name}_steps`, scale: 2 } };
+  loadPlotly().then(P => {
+    P.react(stepsPlotEl, traces, layout, config);
+    if (!stepsPlotEl.dataset.bound) {  // a click on a point shows that step
+      stepsPlotEl.dataset.bound = "1";
+      stepsPlotEl.on("plotly_click", ev => { const p = ev.points && ev.points[0]; if (p) setStep(p.pointIndex); });
+    }
+  }).catch(err => { stepsPlotEl.replaceChildren(h("div", { class: "empty" }, `No plot: ${err.message}`)); });
+  return h("div", { class: "steps-plot-wrap" }, stepsPlotEl,
+    h("div", { class: "hint" }, "Drag to zoom, double-click to reset; the toolbar pans, zooms and saves the plot as a PNG. Click a point to show that step. Click a legend entry to hide or show it."));
+}
+// storage of the step shown (result.storage, issue #128): one row per storage table row
+function storageBlock(r) {
+  const t = S.state.case.tables;
+  if (!r.storage || !r.storage.some(x => x.solved)) return null;
+  return block("Storage", ["#", "gen", "charge bus", "Pch MW", "Pdis MW", "E MWh", "aging $/h"],
+    r.storage.map((x, i) => {
+      const s = t.storage[i] || [];
+      const g = t.gen[(s[0] ?? 0) - 1];
+      return [i + 1, s[0] ?? "–", s[1] === -1 ? (g ? `${g[0]} (gen)` : "gen") : s[1] ?? "–"].concat(x.solved
+        ? [fmt(x.Pch, 2), fmt(x.Pdis, 2), fmt(x.E, 2), fmt(x.cost, 2)] : ["–", "–", "–", "–"]);
+    }));
 }
 
 function renderResults() {
@@ -2840,22 +3516,26 @@ function renderResults() {
     return;
   }
   const c = S.state.case;
-  const kind = (r.kind === "pf" ? "Power flow" : r.dc ? "DC optimal power flow" : "Optimal power flow")
+  const kind = (r.multistep ? "Multistep " : "") + (r.kind === "pf" ? "Power flow" : r.dc ? "DC optimal power flow" : "Optimal power flow")
     + (r.solver ? ` (${r.solver.replace(/^(AC|DC): /, "")})` : "");
   const totalPg = r.gen.reduce((s, g) => s + g.Pg, 0);
-  const totalPd = c.tables.bus.reduce((s, b) => s + b[2], 0);
+  // a multistep step has its own loads: sum them from its area rows
+  const multi = hasSteps(r);
+  const totalPd = multi ? (r.areas || []).reduce((s, a) => s + a.Pd, 0) : c.tables.bus.reduce((s, b) => s + b[2], 0);
   const cards = h("div", { class: "cards" },
     card(kind, r.success ? "Converged" : "Failed", r.success ? "ok" : "fail"),
     r.success ? card("Generation", `${fmt(totalPg, 1)} MW`) : null,
     r.success ? card("Load", `${fmt(totalPd, 1)} MW`) : null,
     r.success ? card("Losses", `${fmt(r.losses_MW, 2)} MW` + (r.dcline && r.dcline.length ? ` (DC ${fmt(r.dcline_losses_MW, 2)})` : "")) : null,
     r.objective !== null && r.success ? card("Cost", `${fmt(r.objective, 2)} $/h`) : null,
-    r.success ? card("Vm range", `${fmt(Math.min(...r.bus.map(b => b.Vm)), 3)} – ${fmt(Math.max(...r.bus.map(b => b.Vm)), 3)}`) : null);
-  const kids = [cards];
+    r.success ? card("Vm range", `${fmt(Math.min(...r.bus.map(b => b.Vm)), 3)} – ${fmt(Math.max(...r.bus.map(b => b.Vm)), 3)}`) : null,
+    multi && r.success && r.horizon_objective !== null ? card("Horizon cost", `${fmt(r.horizon_objective, 2)} $ over ${r.steps.length} step(s)`) : null);
+  const kids = multi ? [stepPicker(r), cards] : [cards];
   if (r.success) {
     kids.push(h("div", { style: "margin-bottom:12px" },
-      h("button", { onclick: () => act("/api/apply").then(() => toast("Solution copied into bus Vm/Va, generator Pg/Qg and DC line flows")) },
-        "Apply solution to case"),
+      h("button", { onclick: () => act("/api/apply", multi ? { step: r.step } : {})
+        .then(() => toast("Solution copied into bus Vm/Va, generator Pg/Qg and DC line flows" + (multi ? ` (step ${r.step + 1})` : ""))) },
+        multi ? `Apply step ${r.step + 1} to case` : "Apply solution to case"),
       h("span", { class: "hint", style: "margin-left:10px" }, "copies Vm, Va, Pg, Qg and DC line Pf, Pt, Qf, Qt into the case (undoable)")));
     const busRows = r.bus.map(b => [b.bus_i, fmt(b.Vm, 4), fmt(b.Va, 3)].concat(r.kind === "opf" ? [fmt(b.lam_P, 3)] : []));
     const busCls = r.bus.map((b, i) => {
@@ -2875,12 +3555,15 @@ function renderResults() {
       block("Generator dispatch", ["gen", "bus", "Pg MW", "Qg MVAr"], r.gen.map((g, i) => [i + 1, g.bus, fmt(g.Pg, 2), fmt(g.Qg, 2)])),
       // branch and DC line flows share a row, branch on the left, so they read side by side
       dclineBlock ? h("div", { class: "res-pair" }, branchBlock, dclineBlock) : branchBlock,
+      multi ? storageBlock(r) : null,
       r.areas && (r.areas.length > 1 || c.tables.areas.length) ? block("Areas", ["area", "name", "buses", "Pg MW", "Pd MW", "shunt MW", "loss MW", "export MW", "ref bus"]
         .concat(r.kind === "opf" ? ["price $/MWh"] : []),
         r.areas.map(a => [a.area, a.name || "–", a.buses, fmt(a.Pg, 2), fmt(a.Pd, 2), fmt(a.shunt_MW, 2), fmt(a.losses_MW, 2), fmt(a.export_MW, 2), a.price_ref_bus ?? "–"]
-          .concat(r.kind === "opf" ? [fmt(a.lam_P, 3)] : [])), [], "wide") : null));
+          .concat(r.kind === "opf" ? [fmt(a.lam_P, 3)] : [])), [], "wide") : null,
+      multi ? stepsBlock(r) : null));
   }
-  kids.push(h("details", { open: !r.success }, h("summary", {}, "Solver report"), h("pre", { class: "log" }, r.log || "(no output)")));
+  kids.push(h("details", { open: !r.success }, h("summary", {}, "Solver report"),
+    h("pre", { class: "log" }, (r.log || "(no output)") + (r.stepLog ? "\n" + r.stepLog : ""))));
   if (report) kids.push(report);
   box.replaceChildren(...kids);
 }
@@ -3014,7 +3697,7 @@ async function claudeAct(path, body) {
 }
 
 async function pollClaude() {
-  if (S.exited || conn.down || !S.state || (S.view !== "claude" && !claudeBusy())) return;
+  if (S.exited || conn.down || !S.state || (S.view !== "agent" && !claudeBusy())) return;
   let data;
   try { data = await api("/api/claude", undefined, { background: true }); } catch (_) { return; }
   const was = claudeBusy();
@@ -3023,7 +3706,7 @@ async function pollClaude() {
   const solved = items.slice(claudeSeen).some(t => t.kind === "tool" && t.name === "solve");
   claudeSeen = items.length;
   if (S.claude.revision !== S.state.revision || solved) setState(await api("/api/state", undefined, { background: true }));
-  else { if (was !== claudeBusy()) renderChrome(); if (S.view === "claude") renderClaude(); }
+  else { if (was !== claudeBusy()) renderChrome(); if (S.view === "agent") renderClaude(); }
 }
 
 function claudeToolText(t) {
@@ -3077,9 +3760,10 @@ function renderClaude() {
   const root = $("#claude-root");
   if (!root.value && document.activeElement !== root) root.placeholder = c.default_root;
   root.disabled = !$("#claude-local").checked;
-  $("[data-action=claude-new]").disabled = !c.available;
-  $("#claude-hint").textContent = c.available ? "Each change Claude makes is one undoable edit."
-    : "No Anthropic API key: set ANTHROPIC_API_KEY or put the key in ~/.anthropic, then restart ppedit.";
+  const ready = c.available || agentHasKey();
+  $("[data-action=claude-new]").disabled = !ready;
+  $("#claude-hint").textContent = ready ? "Each change Claude makes is one undoable edit."
+    : `No Anthropic API key: give one in Settings ▸ Agents, or set ANTHROPIC_API_KEY or put the key in ~/.anthropic and restart the ${APP_NAME} server.`;
   const box = $("#claude-sessions");
   const ids = new Set(c.sessions.map(s => s.id));
   if (!ids.has(claudeTab)) claudeTab = c.sessions.length ? c.sessions[c.sessions.length - 1].id : null;
@@ -3124,7 +3808,7 @@ async function newClaudeSession() {
   const local = $("#claude-local").checked, title = $("#claude-title").value;
   await claudeAct("/api/claude/new", {
     title: title.trim(), model: $("#claude-model").value,
-    web: $("#claude-web").checked, local, root: local ? $("#claude-root").value.trim() : null,
+    web: $("#claude-web").checked, local, root: local ? $("#claude-root").value.trim() : null, ...agentOptions(),
   });
   if ($("#claude-title").value === title) $("#claude-title").value = "";
   const last = S.claude.sessions[S.claude.sessions.length - 1];
@@ -3160,6 +3844,80 @@ function confirmDiscard() {
   return !S.state.dirty || confirm("Discard unsaved changes?");
 }
 
+// Solver progress while /api/solve is pending (issue #130): polls
+// /api/solve/progress (background, so it does not count as work) and puts
+// its text (phase, or IPOPT iteration and infeasibility) and a Stop button
+// for stoppable (CVXOPF-*) solves into the busy indicator. Returns the
+// function that ends the polling.
+const SOLVE_POLL = 1000;
+// Follow the running solve (/api/solve/progress, background polls): sets
+// busy.detail and busy.stop, and resolves with the last progress report once
+// it ends (a background solve's report has `outcome`).
+function followSolve() {
+  const stop = async () => {
+    const b = $("#busy .busy-stop");
+    b.disabled = true;
+    try { await api("/api/solve/stop", {}, { background: true }); busy.detail = "stopping"; busyRefresh(); }
+    catch (e) { toast(e.message, true); b.disabled = false; }
+  };
+  return new Promise(resolve => {
+    let fails = 0;
+    const poll = async () => {
+      let p = null;
+      try { p = await api("/api/solve/progress", undefined, { background: true }); fails = 0; }
+      catch (err) { if (err.network || ++fails > 30) return resolve({ running: false, outcome: "error", error: err.message }); }
+      if (p && !p.running) return resolve(p);
+      if (p) {
+        busy.detail = p.stopping ? "stopping" : p.text || "";
+        busy.stop = p.stoppable && !p.stopping ? stop : null;
+        busyRefresh();
+      }
+      setTimeout(poll, SOLVE_POLL);
+    };
+    setTimeout(poll, 150);  // short solves end before the first full interval
+  }).finally(() => {
+    busy.detail = ""; busy.stop = null;
+    const b = $("#busy .busy-stop"); b.disabled = false; b.hidden = true;
+  });
+}
+// Run a solve in the background (POST /api/solve with background): the page
+// stays usable while it runs. The result is loaded when it ends; it is
+// discarded by the server if the case was edited meanwhile. `resume` follows a
+// solve already running (page reloaded during it).
+async function runSolve(kind, req, { resume = false } = {}) {
+  const trigger = $(kind === "pf" ? "#pf-btn" : "#opf-btn");
+  const caret = trigger.querySelector(".caret");
+  S.solving = true;
+  trigger.classList.add("solving"); // ● replaces ▾ until the solver returns
+  caret.textContent = "●";
+  renderChrome();
+  const id = busyStart("/api/solve");
+  busy.items.get(id).background = true;
+  const view0 = S.view;
+  try {
+    if (!resume) await act("/api/solve", { ...req, background: true });
+    const p = await followSolve();
+    setState(await api("/api/state", undefined, { background: true }));
+    if (p.outcome === "error") return toast(p.error || "the solve failed", true);
+    if (p.outcome === "discarded") return toast("The solve finished, but the case changed while it ran, so its result was discarded: run it again", true);
+    const r = S.state.result;
+    if (!r) return;
+    const what = (r.multistep ? `${r.multistep.steps}-step ` : "") + (r.dc ? "DC " : "") + r.kind.toUpperCase() + (r.solver ? ` (${r.solver.replace(/^(AC|DC): /, "")})` : "");
+    const nwarn = (r.messages || []).filter(m => m.level === "warning").length;
+    toast(r.stopped ? `${what} stopped — the case is unchanged`
+      : r.success ? `${what} converged` + (nwarn ? ` with ${nwarn} warning(s) — see Issues` : "")
+      : `${what} did not converge — see Issues and Results`, !r.success);
+    // open Results only if the user stayed where the solve started
+    if (S.view === view0) { if (S.view !== "network") show("results"); else renderNetwork(); }
+  } finally {
+    busyEnd(id);
+    S.solving = false;
+    trigger.classList.remove("solving");
+    caret.textContent = "▾";
+    renderChrome();
+  }
+}
+
 async function onAction(btn) {
   const a = btn.dataset.action;
   closeMenus();
@@ -3176,34 +3934,11 @@ async function onAction(btn) {
     else if (a === "download") downloadUrl(`/api/export?format=${btn.dataset.format}`);
     else if (a === "undo") await act("/api/undo");
     else if (a === "redo") await act("/api/redo");
-    else if (a === "solve") {
-      const trigger = $(btn.dataset.kind === "pf" ? "#pf-btn" : "#opf-btn");
-      const caret = trigger.querySelector(".caret"), title = trigger.title;
-      trigger.disabled = true;
-      trigger.classList.add("solving"); // ● replaces ▾ until the solver returns
-      caret.textContent = "●";
-      trigger.title = SOLVING;
-      renderChrome();
-      try {
-        await act("/api/solve", solveRequest(btn.dataset.kind, btn.dataset.algorithm));
-        const r = S.state.result;
-        const what = (r.dc ? "DC " : "") + r.kind.toUpperCase() + (r.solver ? ` (${r.solver.replace(/^(AC|DC): /, "")})` : "");
-        const nwarn = (r.messages || []).filter(m => m.level === "warning").length;
-        toast(r.success ? `${what} converged` + (nwarn ? ` with ${nwarn} warning(s) — see Issues` : "")
-          : `${what} did not converge — see Issues and Results`, !r.success);
-        if (S.view !== "network") show("results"); else renderNetwork();
-      } finally {
-        trigger.disabled = false;
-        trigger.classList.remove("solving");
-        caret.textContent = "▾";
-        trigger.title = title;
-        renderChrome();
-      }
-    }
+    else if (a === "solve") await runSolve(btn.dataset.kind, solveRequest(btn.dataset.kind, btn.dataset.algorithm, !!btn.dataset.multistep));
     else if (a === "add-row") await addRow();
     else if (a === "dup-row") await duplicateRows();
     else if (a === "del-rows") await deleteRows();
-    else if (a === "import-rows") $("#table-input").click();
+    else if (a === "import-rows") openImportDialog("table");
     else if (a === "export-rows") await exportRows(btn.dataset.format);
     else if (a === "relayout") { if (S.style === "oneline") olCache = null; else layout(true); fitView(); renderNetwork(); }
     else if (a === "fit") { fitView(); renderNetwork(); }
@@ -3217,6 +3952,14 @@ async function onAction(btn) {
     else if (a === "geodata-export") downloadUrl("/api/export?format=csv");
     else if (a === "geodata-clear") {
       if (confirm("Remove the geodata (bus locations) from this case? Undo restores it.")) { await act("/api/geodata", { clear: true }); needFit = true; renderNetwork(); }
+    }
+    else if (a === "series-import") openImportDialog("series");
+    else if (a === "series-panel") openImportDialog("panel");
+    else if (a === "series-export") await exportSeries(btn.dataset.format);
+    else if (a === "series-clear") {
+      const one = currentSeries();
+      if (confirm(one ? `Remove series ${one.name} from this case? Undo restores it.` : "Remove every time series from this case? Undo restores them."))
+        await act("/api/series", one ? { clear: true, name: one.name } : { clear: true });
     }
     else if (a === "claude-new") await newClaudeSession();
     else if (a === "exit") await exitServer();
@@ -3290,14 +4033,14 @@ async function showFolder(path) {
 }
 
 async function exitServer() {
-  if (conn.down) return closeWindow("ppedit server stopped");  // nothing to stop (#51)
+  if (conn.down) return closeWindow(`${APP_NAME} server stopped`);  // nothing to stop (#51)
   const msg = S.state.dirty
-    ? "The case has unsaved changes that will be lost.\n\nStop the ppedit server anyway?"
-    : "Stop the ppedit server? The editor will stop working until you run ppedit serve again.";
+    ? `The case has unsaved changes that will be lost.\n\nStop the ${APP_NAME} server anyway?`
+    : `Stop the ${APP_NAME} server? The editor will stop working until you run ppedit serve again.`;
   if (!confirm(msg)) return;
   try { await api("/api/exit", {}); }
   catch (err) { if (!err.network) return toast(err.message, true); }  // no response: already stopped (#51)
-  closeWindow("ppedit server stopped");
+  closeWindow(`${APP_NAME} server stopped`);
 }
 
 // Leave the page: stop watching the server, close the tab, and show `title`
@@ -3312,7 +4055,7 @@ function closeWindow(title) {
   document.body.replaceChildren(h("div", { class: "stopped" },
     h("h1", {}, title),
     h("p", {}, "You can close this tab. Run ppedit serve to start the editor again.")));
-  document.title = "ppedit (stopped)";
+  document.title = `${APP_NAME} (stopped)`;
   window.close(); // browsers allow this only for some tabs (e.g. no back history); otherwise the page above stays
 }
 
@@ -3352,7 +4095,7 @@ function serverDown() {
   if (conn.down || S.exited || !S.meta) return;
   conn.down = true;
   conn.since = Date.now();
-  document.title = "ppedit (not responding)";
+  document.title = `${APP_NAME} (not responding)`;
   showServerDialog();
   let busy = false;
   conn.poll = setInterval(async () => {  // wait for the server to come back
@@ -3380,9 +4123,9 @@ function serverBack(p) {
     return;
   }
   conn.down = false;
-  document.title = S.state ? `${S.state.dirty ? "• " : ""}${S.state.case.name} — ppedit` : "ppedit";
+  document.title = S.state ? `${S.state.dirty ? "• " : ""}${S.state.case.name} — ${APP_NAME}` : APP_NAME;
   api("/api/state", undefined, { background: true }).then(setState).catch(() => {});
-  toast("Connected to the ppedit server again");
+  toast(`Connected to the ${APP_NAME} server again`);
 }
 
 // The command that starts the server again for this page: same file, port and
@@ -3399,16 +4142,16 @@ function serverCommand() {
 }
 
 const waitingText = () => conn.forbidden
-  ? `A ppedit server answers at ${location.host} but refuses this page's session token: it was started with another token. Open the URL it printed, or stop it and run the restart command.`
+  ? `A ${APP_NAME} server answers at ${location.host} but refuses this page's session token: it was started with another token. Open the URL it printed, or stop it and run the restart command.`
   : `Waiting for the server to answer… (${Math.round((Date.now() - conn.since) / 1000)} s)`;
-const exitButton = () => h("button", { onclick: () => closeWindow("ppedit server not responding") }, "Exit browser window");
+const exitButton = () => h("button", { onclick: () => closeWindow(`${APP_NAME} server not responding`) }, "Exit browser window");
 
 function showServerDialog() {
   const d = $("#server-down");
   const dirty = S.state && S.state.dirty;
   d.replaceChildren(...[
-    h("h2", { id: "server-down-title" }, "ppedit server not responding"),
-    h("p", {}, `This page cannot reach the ppedit server at ${location.host}. The server may have stopped (Ctrl-C, Exit, a closed terminal, or an error), or it may be too busy to answer. The editor continues when it answers again.`),
+    h("h2", { id: "server-down-title" }, `${APP_NAME} server not responding`),
+    h("p", {}, `This page cannot reach the ${APP_NAME} server at ${location.host}. The server may have stopped (Ctrl-C, Exit, a closed terminal, or an error), or it may be too busy to answer. The editor continues when it answers again.`),
     dirty ? h("p", { class: "warn" }, "The case has unsaved changes. The server holds them: if it stopped, they are lost.") : null,
     h("p", { class: "status" }, waitingText()),
     h("div", { class: "actions" },
@@ -3425,7 +4168,7 @@ function showRestart() {
     navigator.clipboard.writeText(cmd).then(() => { copy.textContent = "Copied"; }, () => toast("Copy the command by hand", true));
   } }, "Copy");
   d.replaceChildren(
-    h("h2", { id: "server-down-title" }, "Restart the ppedit server"),
+    h("h2", { id: "server-down-title" }, `Restart the ${APP_NAME} server`),
     h("p", {}, "A web page cannot start programs on your computer, so run this command in a terminal on the server machine:"),
     h("div", { class: "command" }, h("code", {}, cmd), navigator.clipboard ? copy : null),
     h("p", {}, "No new browser window opens: this page reconnects as soon as the server answers, and reloads the case the new server opens."),
@@ -3437,10 +4180,11 @@ function showRestart() {
 }
 
 // /api/solve request; CVXOPF-* solvers get the solve options from the Settings tab
-function solveRequest(kind, algorithm) {
+function solveRequest(kind, algorithm, multistep = false) {
   const req = { kind };
   if (algorithm) req.algorithm = algorithm;
-  if (kind === "opf" && algorithm && algorithm.startsWith("CVXOPF-")) req.options = cvxopfOptions();
+  if (kind === "opf" && algorithm && algorithm.startsWith("CVXOPF-")) req.options = cvxopfOptions(multistep);
+  if (multistep) req.multistep = true;
   return req;
 }
 
@@ -3450,10 +4194,17 @@ function buildSolverMenus() {
   const item = (kind, x) => h("button", { "data-action": "solve", "data-kind": kind, "data-algorithm": x.algorithm, role: "menuitem" }, x.label);
   $("#pf-menu").replaceChildren(...S.meta.solvers.pf.map(x => item("pf", x)));
   const opf = S.meta.solvers.opf;
+  // Multistep (issue #124): the cvxopf solvers over the case time series
+  const multi = opf.filter(x => x.algorithm.startsWith("CVXOPF-")).map(x => {
+    const b = item("opf", { ...x, label: x.label.replace(/^(AC|DC): CVXOPF ?/, "").replace(/^\((IPOPT)\)$/, "full AC ($1)") || x.label });
+    b.dataset.multistep = "1";
+    b.textContent = `${x.dc ? "DC" : "AC"}: ${b.textContent}`;
+    return b;
+  });
   $("#opf-menu").replaceChildren(...[["AC OPF", false], ["DC OPF", true]].flatMap(([title, dc]) => {
     const rows = opf.filter(x => x.dc === dc);
     return rows.length ? [h("div", { class: "sep" }, title), ...rows.map(x => item("opf", { ...x, label: x.label.replace(/^(AC|DC): /, "") }))] : [];
-  }));
+  }), ...(multi.length ? [h("div", { class: "sep" }, "Multistep OPF"), ...multi] : []));
 }
 
 // About dialog: package metadata from /api/meta `about` (ppedit.server.about),
@@ -3478,7 +4229,8 @@ function showAbout() {
   const paras = (a.funding || "").split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
   const close = h("button", { onclick: () => d.close() }, "Close");
   d.replaceChildren(
-    h("h2", { id: "about-title" }, a.name || "ppedit", h("span", { class: "ver" }, a.version || S.meta.version || "")),
+    h("h2", { id: "about-title" }, APP_NAME, h("span", { class: "ver" }, a.version || S.meta.version || "")),
+    APP_NAME !== (a.name || "ppedit") ? h("p", { class: "summary" }, `Based on ${a.name || "ppedit"}.`) : null,
     a.summary ? h("p", { class: "summary" }, a.summary) : null,
     h("dl", {},
       row("Copyright", (a.copyright && a.copyright.length) ? a.copyright.join("\n") : "—"),
@@ -3533,10 +4285,25 @@ async function init() {
     else if (t.id === "net-areas") setAreas(t.checked);
   });
   $("#map-menu").addEventListener("change", e => { if (e.target.dataset.layer) setMapLayer(e.target.dataset.layer, e.target.checked); });
+  // the chooser filters on the last extension only (acceptList): check the whole name
+  const formatRefused = (f, which) => {
+    const formats = pickFormats[which] || readFormats();
+    if (fileFormatOk(f.name, formats)) return false;
+    toast(`${f.name} is not a file of the chosen format (${formats.length > 6 ? "see File format" : formats.join(", ")})`, true);
+    return true;
+  };
   $("#table-input").addEventListener("change", e => {
     const f = e.target.files[0]; e.target.value = "";
-    if (f) importRows(f).catch(() => { /* toast already shown */ });
+    if (f && !formatRefused(f, "table")) importRows(f).catch(() => { /* toast already shown */ });
   });
+  $("#series-input").addEventListener("change", e => {
+    const f = e.target.files[0]; e.target.value = "";
+    if (f && !formatRefused(f, "series")) importSeries(f).catch(() => { /* toast already shown */ });
+  });
+  const delta = $("#series-delta");
+  delta.addEventListener("change", () => act("/api/series", { delta: delta.value, name: S.seriesName }).catch(() => renderSeries()));
+  $("#series-pick").addEventListener("change", e => { S.seriesName = e.target.value; renderSeries(); });
+  delta.addEventListener("keydown", e => { if (e.key === "Enter") delta.blur(); });
   $("#geodata-input").addEventListener("change", e => {
     const f = e.target.files[0]; e.target.value = "";
     if (f) loadGeodata(f).catch(() => { /* toast already shown */ });
@@ -3589,7 +4356,7 @@ async function init() {
   try {
     if (sessionStorage.getItem("ppedit.restarted")) {
       sessionStorage.removeItem("ppedit.restarted");
-      setTimeout(() => toast("The ppedit server was restarted: unsaved changes made before it stopped were lost", true), 500);
+      setTimeout(() => toast(`The ${APP_NAME} server was restarted: unsaved changes made before it stopped were lost`, true), 500);
     }
   } catch (_) { /* no storage */ }
   S.state = await api("/api/state");
@@ -3601,9 +4368,17 @@ async function init() {
   // (with ?algorithm=NAME, else the default solver) and ?view=NAME opens that tab
   const qs = new URLSearchParams(location.search);
   if (["pf", "opf"].includes(qs.get("solve"))) {
+    const p = followSolve();  // ?solve waits for the result (decision #44): a foreground request
     try { await act("/api/solve", solveRequest(qs.get("solve"), qs.get("algorithm"))); } catch (err) { toast(err.message, true); }
+    finally { p.catch(() => {}); }
+  } else {
+    // a background solve still running (page reloaded meanwhile): follow it
+    api("/api/solve/progress", undefined, { background: true }).then(p => {
+      if (p.running && p.background) runSolve(p.kind === "pf" ? "pf" : "opf", null, { resume: true }).catch(() => {});
+    }).catch(() => {});
   }
-  if (qs.get("view") && $(`#tabs [data-view="${qs.get("view")}"], #table-tabs [data-view="${qs.get("view")}"]`)) show(qs.get("view"));
+  const view = ({ tables: "case", series: "multistep", claude: "agent" })[qs.get("view")] || qs.get("view");  // former tab names (issue #133 for claude)
+  if (view && $(`#tabs [data-view="${view}"], #table-tabs [data-view="${view}"]`)) show(view);
 }
 
 busyRefresh();  // page load counts as pending work from the start

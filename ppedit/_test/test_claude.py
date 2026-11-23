@@ -122,3 +122,49 @@ def test_no_api_key(monkeypatch,tmp_path):
     assert not test.get("/api/claude").get_json()["claude"]["available"]
     res = test.post("/api/claude/new",json={},headers={"X-PPEdit":"1"})
     assert res.status_code == 400 and "API key" in res.get_json()["error"]
+
+def _keyed_client(*responses):
+    """Fake Messages API that also records the API key of each request"""
+    keys = []
+    inner = _client(*responses)
+    def client(payload,key=None):
+        keys.append(key)
+        return inner(payload)
+    client.calls,client.keys = inner.calls,keys
+    return client
+
+def test_api_key_text_and_file(monkeypatch,tmp_path):
+    monkeypatch.delenv("ANTHROPIC_API_KEY",raising=False)
+    monkeypatch.setenv("HOME",str(tmp_path))
+    client = _keyed_client(_text("ok"))
+    app = create_app(Case.builtin("case9"))
+    sessions = app.config["CLAUDE"]
+    sessions.client = client
+    sessions.available = lambda: False  # no server default key
+    test = app.test_client()
+    def post(path,body=None):
+        res = test.post(path,json=body or {},headers={"X-PPEdit":"1"})
+        return res.status_code,res.get_json()
+    status,st = post("/api/claude/new")
+    assert status == 400 and "API key" in st["error"]
+    status,st = post("/api/claude/new",{"agent":"claude","api_key":"sk-text"})
+    assert status == 200 and st["claude"]["agents"] == ["claude"]
+    session = st["claude"]["sessions"][0]
+    assert session["agent"] == "claude" and "sk-text" not in str(st)
+    (tmp_path/"key.txt").write_text("sk-file\nignored\n")
+    status,st = post("/api/claude/new",{"api_key_file":"~/key.txt"})
+    assert status == 200 and "sk-file" not in str(st)
+    for sid in (1,2):
+        post("/api/claude/send",{"id":sid,"text":"hi"})
+        app.config["CLAUDE"].get(sid).wait(10)
+    assert client.keys == ["sk-text","sk-file"]
+
+def test_api_key_file_errors_and_unknown_agent(tmp_path):
+    _,_,post = _app(_client(_text("ok")))
+    status,st = post("/api/claude/new",{"api_key_file":str(tmp_path/"missing")})
+    assert status == 400 and "cannot read API key file" in st["error"]
+    (tmp_path/"empty").write_text("\n")
+    status,st = post("/api/claude/new",{"api_key_file":str(tmp_path/"empty")})
+    assert status == 400 and "is empty" in st["error"]
+    status,st = post("/api/claude/new",{"agent":"other"})
+    assert status == 400 and "unknown agent" in st["error"]

@@ -20,8 +20,11 @@
 - [x] `areas` table (edit, validate, area colors in the diagram, per-area results)
 - [ ] Copy/paste of cell ranges to and from spreadsheets
 - [x] Claude tab: multiple Claude API sessions that edit the case, with web and local data sources
+- [x] Agent tab (renamed from Claude) and Settings ▸ Agents: agent choice and API key text or key file (issue #133, decision #64)
 - [x] cvxopf solve options on the Settings tab (issue #88; decision #48)
-- [ ] cvxopf multi-period horizons, profiles and device models (issue #88; DESIGN.md open questions)
+- [x] Time series of loads and generator/DC line limits, multistep cvxopf OPF (issue #124; decision #60)
+- [x] Storage table modeled in multistep CVXOPF OPF (issue #128; decision #62)
+- [ ] cvxopf device models (nondispatchable units, curtailable loads) and coupling between steps such as ramp limits (issue #88; DESIGN.md open questions)
 - [x] Solver errors and warnings on the Issues tab (issue #89; decision #49)
 - [x] Physical meaning and constraints of solver warnings on the Issues tab (follow-up to PR #92; decision #53)
 - [ ] Claude sessions: stream responses, persist conversations, show a diff of each session's edits
