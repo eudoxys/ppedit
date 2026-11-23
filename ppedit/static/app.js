@@ -218,12 +218,23 @@ function busyRefresh() {
   if (busy.timer) return;  // still within BUSY_DELAY
   const oldest = [...busy.items.values()].reduce((a, b) => (a.t0 <= b.t0 ? a : b));
   const ms = performance.now() - oldest.t0;
-  el.querySelector(".busy-label").textContent = oldest.label + "…" + (ms >= BUSY_ELAPSED ? ` ${Math.floor(ms / 1000)} s` : "")
+  // the status sits at the right end of the tab bar, no wider than the space after the last tab
+  const tabs = $("#tabs").getBoundingClientRect(), text = el.querySelector(".busy-text");
+  if (tabs.height) {
+    const last = [...$("#tabs").children].reduce((r, b) => Math.max(r, b.getBoundingClientRect().right), tabs.left);
+    text.style.top = `${tabs.top + tabs.height / 2}px`;
+    text.style.maxWidth = `${Math.max(140, tabs.right - last - 40)}px`;
+  }
+  const label = el.querySelector(".busy-label");
+  label.textContent = oldest.label + "…" + (ms >= BUSY_ELAPSED ? ` ${Math.floor(ms / 1000)} s` : "")
     + (busy.detail ? ` · ${busy.detail}` : "");
+  label.title = label.textContent;
   const stop = el.querySelector(".busy-stop");
   stop.hidden = !busy.stop;
   stop.onclick = busy.stop;
-  el.hidden = false; document.body.classList.add("busy");
+  el.hidden = false;
+  // a background solve (runSolve) leaves the page usable: no progress cursor for it alone
+  document.body.classList.toggle("busy", [...busy.items.values()].some(x => !x.background));
   if (!busy.tick) busy.tick = setInterval(busyRefresh, 1000);
 }
 
@@ -309,7 +320,7 @@ function issuesFor(table) {
 
 // ---------------------------------------------------------------- chrome
 
-const SOLVING = "Solving: wait for the solver to finish";
+const SOLVING = "Solving: the page stays usable meanwhile; the result shows when the solver finishes (an edit made meanwhile discards it)";
 const OPF_NO_COST = "Run OPF is disabled: OPF needs generator cost data (gencost). "
   + "Add cost rows on the Gen costs tab or open a case that has them.";
 
@@ -324,9 +335,11 @@ function renderChrome() {
   $("#undo-btn").disabled = !st.can_undo;
   $("#redo-btn").disabled = !st.can_redo;
   const noCost = !c.tables.gencost.length;
-  const opfSolving = $("#opf-btn").classList.contains("solving");
-  $("#opf-btn").disabled = noCost || opfSolving;
-  $("#opf-wrap").title = opfSolving ? SOLVING : noCost ? OPF_NO_COST : "Run an optimal power flow: choose the solver";
+  // one solve at a time (the server refuses another): both menus wait while one runs
+  const solving = !!S.solving;
+  $("#opf-btn").disabled = noCost || solving;
+  $("#pf-btn").disabled = solving;
+  $("#opf-wrap").title = solving ? SOLVING : noCost ? OPF_NO_COST : "Run an optimal power flow: choose the solver";
   for (const el of [$("#baseMVA"), $("#version")]) {
     if (document.activeElement !== el) el.value = el.id === "baseMVA" ? c.baseMVA : c.version;
   }
@@ -3837,31 +3850,72 @@ function confirmDiscard() {
 // for stoppable (CVXOPF-*) solves into the busy indicator. Returns the
 // function that ends the polling.
 const SOLVE_POLL = 1000;
-function watchSolve() {
-  let done = false, timer = null;
+// Follow the running solve (/api/solve/progress, background polls): sets
+// busy.detail and busy.stop, and resolves with the last progress report once
+// it ends (a background solve's report has `outcome`).
+function followSolve() {
   const stop = async () => {
     const b = $("#busy .busy-stop");
     b.disabled = true;
     try { await api("/api/solve/stop", {}, { background: true }); busy.detail = "stopping"; busyRefresh(); }
     catch (e) { toast(e.message, true); b.disabled = false; }
   };
-  const poll = async () => {
-    timer = null;
-    try {
-      const p = await api("/api/solve/progress", undefined, { background: true });
-      if (done) return;
-      busy.detail = p.running ? (p.stopping ? "stopping" : p.text || "") : "";
-      busy.stop = p.running && p.stoppable && !p.stopping ? stop : null;
-      busyRefresh();
-    } catch (_) { /* the solve request reports errors */ }
-    if (!done) timer = setTimeout(poll, SOLVE_POLL);
-  };
-  timer = setTimeout(poll, SOLVE_POLL);
-  return () => {
-    done = true; clearTimeout(timer);
+  return new Promise(resolve => {
+    let fails = 0;
+    const poll = async () => {
+      let p = null;
+      try { p = await api("/api/solve/progress", undefined, { background: true }); fails = 0; }
+      catch (err) { if (err.network || ++fails > 30) return resolve({ running: false, outcome: "error", error: err.message }); }
+      if (p && !p.running) return resolve(p);
+      if (p) {
+        busy.detail = p.stopping ? "stopping" : p.text || "";
+        busy.stop = p.stoppable && !p.stopping ? stop : null;
+        busyRefresh();
+      }
+      setTimeout(poll, SOLVE_POLL);
+    };
+    setTimeout(poll, 150);  // short solves end before the first full interval
+  }).finally(() => {
     busy.detail = ""; busy.stop = null;
     const b = $("#busy .busy-stop"); b.disabled = false; b.hidden = true;
-  };
+  });
+}
+// Run a solve in the background (POST /api/solve with background): the page
+// stays usable while it runs. The result is loaded when it ends; it is
+// discarded by the server if the case was edited meanwhile. `resume` follows a
+// solve already running (page reloaded during it).
+async function runSolve(kind, req, { resume = false } = {}) {
+  const trigger = $(kind === "pf" ? "#pf-btn" : "#opf-btn");
+  const caret = trigger.querySelector(".caret");
+  S.solving = true;
+  trigger.classList.add("solving"); // ● replaces ▾ until the solver returns
+  caret.textContent = "●";
+  renderChrome();
+  const id = busyStart("/api/solve");
+  busy.items.get(id).background = true;
+  const view0 = S.view;
+  try {
+    if (!resume) await act("/api/solve", { ...req, background: true });
+    const p = await followSolve();
+    setState(await api("/api/state", undefined, { background: true }));
+    if (p.outcome === "error") return toast(p.error || "the solve failed", true);
+    if (p.outcome === "discarded") return toast("The solve finished, but the case changed while it ran, so its result was discarded: run it again", true);
+    const r = S.state.result;
+    if (!r) return;
+    const what = (r.multistep ? `${r.multistep.steps}-step ` : "") + (r.dc ? "DC " : "") + r.kind.toUpperCase() + (r.solver ? ` (${r.solver.replace(/^(AC|DC): /, "")})` : "");
+    const nwarn = (r.messages || []).filter(m => m.level === "warning").length;
+    toast(r.stopped ? `${what} stopped — the case is unchanged`
+      : r.success ? `${what} converged` + (nwarn ? ` with ${nwarn} warning(s) — see Issues` : "")
+      : `${what} did not converge — see Issues and Results`, !r.success);
+    // open Results only if the user stayed where the solve started
+    if (S.view === view0) { if (S.view !== "network") show("results"); else renderNetwork(); }
+  } finally {
+    busyEnd(id);
+    S.solving = false;
+    trigger.classList.remove("solving");
+    caret.textContent = "▾";
+    renderChrome();
+  }
 }
 
 async function onAction(btn) {
@@ -3880,33 +3934,7 @@ async function onAction(btn) {
     else if (a === "download") downloadUrl(`/api/export?format=${btn.dataset.format}`);
     else if (a === "undo") await act("/api/undo");
     else if (a === "redo") await act("/api/redo");
-    else if (a === "solve") {
-      const trigger = $(btn.dataset.kind === "pf" ? "#pf-btn" : "#opf-btn");
-      const caret = trigger.querySelector(".caret"), title = trigger.title;
-      trigger.disabled = true;
-      trigger.classList.add("solving"); // ● replaces ▾ until the solver returns
-      caret.textContent = "●";
-      trigger.title = SOLVING;
-      renderChrome();
-      const watch = watchSolve();
-      try {
-        await act("/api/solve", solveRequest(btn.dataset.kind, btn.dataset.algorithm, !!btn.dataset.multistep));
-        const r = S.state.result;
-        const what = (r.multistep ? `${r.multistep.steps}-step ` : "") + (r.dc ? "DC " : "") + r.kind.toUpperCase() + (r.solver ? ` (${r.solver.replace(/^(AC|DC): /, "")})` : "");
-        const nwarn = (r.messages || []).filter(m => m.level === "warning").length;
-        toast(r.stopped ? `${what} stopped — the case is unchanged`
-          : r.success ? `${what} converged` + (nwarn ? ` with ${nwarn} warning(s) — see Issues` : "")
-          : `${what} did not converge — see Issues and Results`, !r.success);
-        if (S.view !== "network") show("results"); else renderNetwork();
-      } finally {
-        watch();
-        trigger.disabled = false;
-        trigger.classList.remove("solving");
-        caret.textContent = "▾";
-        trigger.title = title;
-        renderChrome();
-      }
-    }
+    else if (a === "solve") await runSolve(btn.dataset.kind, solveRequest(btn.dataset.kind, btn.dataset.algorithm, !!btn.dataset.multistep));
     else if (a === "add-row") await addRow();
     else if (a === "dup-row") await duplicateRows();
     else if (a === "del-rows") await deleteRows();
@@ -4340,9 +4368,14 @@ async function init() {
   // (with ?algorithm=NAME, else the default solver) and ?view=NAME opens that tab
   const qs = new URLSearchParams(location.search);
   if (["pf", "opf"].includes(qs.get("solve"))) {
-    const watch = watchSolve();
+    const p = followSolve();  // ?solve waits for the result (decision #44): a foreground request
     try { await act("/api/solve", solveRequest(qs.get("solve"), qs.get("algorithm"))); } catch (err) { toast(err.message, true); }
-    finally { watch(); }
+    finally { p.catch(() => {}); }
+  } else {
+    // a background solve still running (page reloaded meanwhile): follow it
+    api("/api/solve/progress", undefined, { background: true }).then(p => {
+      if (p.running && p.background) runSolve(p.kind === "pf" ? "pf" : "opf", null, { resume: true }).catch(() => {});
+    }).catch(() => {});
   }
   const view = ({ tables: "case", series: "multistep", claude: "agent" })[qs.get("view")] || qs.get("view");  // former tab names (issue #133 for claude)
   if (view && $(`#tabs [data-view="${view}"], #table-tabs [data-view="${view}"]`)) show(view);
