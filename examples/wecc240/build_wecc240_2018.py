@@ -1,14 +1,14 @@
-"""Build examples/wecc240_2018.py: the WECC 240 case with generator costs
+"""Build examples/wecc240/wecc240_2018.py: the WECC 240 case with generator costs
 
-Syntax: python3 examples/build_wecc240_2018.py
+Syntax: python3 examples/wecc240/build_wecc240_2018.py
 
-Reads `examples/wecc240_2011.py` (the case and its geodata), gives each
+Reads `examples/wecc240/wecc240_2011.py` (the case and its geodata), gives each
 generator the polynomial cost (`c2,c1,c0`) of its type from
-`examples/wecc240_gentypes.csv`, and writes `examples/wecc240_2018.py`
+`examples/wecc240/wecc240_gentypes.csv`, and writes `examples/wecc240/wecc240_2018.py`
 (case name `wecc240_2018`). A generator's type is the PSS/E generator ID at
-the end of its `id` in `examples/wecc240_cost.csv` (`<bus name>_<ID>`, one
+the end of its `id` in `examples/wecc240/wecc240_cost.csv` (`<bus name>_<ID>`, one
 row per generator in case order); the bus name is checked against
-`examples/wecc240_bus.csv`. Start-up and shutdown costs are 0.
+`examples/wecc240/wecc240_bus.csv`. Start-up and shutdown costs are 0.
 
 Branch `rateA` (0 for every branch in the source case) is set to the first
 nonzero of `rateB` and `rateC`; it stays 0 (unlimited) when both are 0.
@@ -31,7 +31,7 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0,os.path.dirname(HERE))
+sys.path.insert(0,os.path.dirname(os.path.dirname(HERE)))
 from ppedit import Case # pylint: disable=wrong-import-position
 
 VG = {4039:1.08,4131:1.08,4132:1.08,4231:1.08,6433:1.08}
@@ -50,7 +50,7 @@ def read(name):
         return list(csv.DictReader(fh))
 
 def main():
-    """Write examples/wecc240_2018.py"""
+    """Write examples/wecc240/wecc240_2018.py"""
     case = Case.load(os.path.join(HERE,"wecc240_2011.py"))
     types = {r["type"]:[float(r[x]) for x in ("c2","c1","c0")] for r in read("wecc240_gentypes.csv")}
     names = {int(r["id"]):r["name"] for r in read("wecc240_bus.csv")}
@@ -96,7 +96,7 @@ def main():
     if errors:
         raise ValueError("; ".join(errors))
     case.save(os.path.join(HERE,"wecc240_2018.py"))
-    print(f"wrote examples/wecc240_2018.py: {case.size()}; rateA from rateB "
+    print(f"wrote examples/wecc240/wecc240_2018.py: {case.size()}; rateA from rateB "
         f"{counts['rateB']}, from rateC {counts['rateC']}, unrated {counts['unrated']}; "
         f"rateA raised on {raised} branches")
 

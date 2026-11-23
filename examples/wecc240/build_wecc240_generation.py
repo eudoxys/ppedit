@@ -37,7 +37,7 @@ Method
 Syntax
 ------
 
-    python3 examples/build_wecc240_generation.py DATA [--wecc240 FOLDER]
+    python3 examples/wecc240/build_wecc240_generation.py DATA [--wecc240 FOLDER]
         [--case CASE] [--output CSV] [--start TIME] [--end TIME]
 
 `DATA` is the `data/wecc` folder of a checkout of eudoxys/generation (a
@@ -55,7 +55,7 @@ import sys
 
 import pandas as pd
 
-sys.path.insert(0,os.path.join(os.path.dirname(__file__),".."))
+sys.path.insert(0,os.path.join(os.path.dirname(__file__),"..",".."))
 from ppedit import Case # pylint: disable=wrong-import-position
 from ppedit.case import geohash # pylint: disable=wrong-import-position
 
