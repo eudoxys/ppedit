@@ -275,7 +275,12 @@ In the editor:
     the steps have no time labels) or the arrows (first, 24 back, 1 back,
     1 forward, 24 forward, last), and click **Copy to case**: every series
     value of that step (all series combined) replaces the case value, as
-    one edit that Ctrl+Z undoes; the series stays. After a multistep
+    one edit that Ctrl+Z undoes; the series stays. The series shown has
+    **Data** and **Plot** tabs above its table, and **Columns ▾** chooses
+    the columns shown in both (listed from the largest sum over the steps
+    down; the five largest are shown at first). In the plot, drag or use
+    the toolbar to zoom and pan, save it as PNG, and click a point to
+    choose that step for Copy to case. After a multistep
     solve, the Results tab's **Steps** table has **Data** and **Plot**
     tabs: Plot draws generation, load, losses, storage and cost over the
     steps (zoom and pan by dragging or with the toolbar, save as PNG,

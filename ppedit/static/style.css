@@ -373,6 +373,14 @@ td.bad input { color: var(--err); }
 .steps-plot-wrap { padding: 6px 10px 8px; }
 .steps-plot-wrap .hint { margin: 4px 0 0; }
 .steps-plot { width: 100%; min-height: 380px; }
+.series-view-bar { display: flex; align-items: center; gap: 12px; padding: 6px 14px; }
+.series-view-bar .steps-tabs { margin-left: 0; }
+.series-cols { min-width: 280px; max-height: 60vh; overflow: auto; }
+.series-cols-actions { display: flex; gap: 4px; padding: 4px 6px; }
+.series-cols-actions button { font-size: 12px; padding: 2px 8px; }
+.series-cols-list label { display: flex; gap: 6px; align-items: center; padding: 2px 10px; font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.series-cols-list label .unit { margin-left: auto; padding-left: 12px; color: var(--muted); }
+.series-plot-wrap { background: var(--panel); }
 .res-block h3 { margin: 0; padding: 8px 12px; font-size: 13px; border-bottom: 1px solid var(--line); background: #f7f8f6; }
 .res-block .scroll { max-height: 360px; overflow: auto; }
 .res-block table { width: 100%; }

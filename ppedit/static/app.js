@@ -19,6 +19,8 @@ const S = {
   seriesName: null,    // series shown on the Multistep tab ("" = all combined; currentSeries)
   seriesStep: { on: false, step: 0 }, // step chosen on the Multistep tab (renderSeriesStep; combined steps from 0)
   stepsTab: "data",    // Results Steps block: "data" (table) or "plot" (stepsPlot)
+  seriesTab: "data",   // Multistep tab series view: "data" (table) or "plot" (seriesPlot)
+  seriesCols: {},      // series name -> column names shown (seriesShown; default: the SERIES_COLS largest)
   issueOpen: null,     // message of the solver warning whose detail is open (Issues tab)
   pos: {},             // bus_i -> {x, y}
   zoom: { k: 1, x: 0, y: 0 },
@@ -669,14 +671,102 @@ function renderSeries() {
         h("td", {}, x.timed ? "yes" : "no"), h("td", {}, x.index[0]), h("td", {}, x.index[x.index.length - 1]), h("td", {}, x.delta)))))));
     return;
   }
+  const shown = seriesShown(ser), bar = seriesViewBar(ser, shown);
+  if (S.seriesTab === "plot") {
+    $("#series-body").replaceChildren(format, bar, seriesPlot(ser, shown));
+    return;
+  }
   const cur = seriesStepRow(ser);
   const rows = ser.values.slice(0, SERIES_SHOW).map((v, t) => h("tr", t === cur ? { class: "current" } : {}, h("td", { class: "rowhead" }, t + 1),
-    h("td", {}, ser.index[t]), ...v.map(x => h("td", { class: "num" }, fmt(x, S.precision.MW ?? 6)))));
-  $("#series-body").replaceChildren(format, h("div", { class: "table-wrap" }, h("table", { class: "series-table" },
+    h("td", {}, ser.index[t]), ...shown.map(j => h("td", { class: "num" }, fmt(v[j], S.precision.MW ?? 6)))));
+  $("#series-body").replaceChildren(format, bar, h("div", { class: "table-wrap" }, h("table", { class: "series-table" },
     h("thead", {}, h("tr", {}, h("th", { class: "rowhead" }, "#"), h("th", {}, "time"),
-      ...ser.columns.map(n => h("th", { title: seriesTitle(n) }, n)))),
+      ...shown.map(j => h("th", { title: seriesTitle(ser.columns[j]) }, ser.columns[j])))),
     h("tbody", {}, rows))),
     ...(ser.values.length > SERIES_SHOW ? [h("div", { class: "hint" }, `First ${SERIES_SHOW} of ${ser.values.length} steps shown; export the series to see them all.`)] : []));
+}
+// Columns of a series in descending order of their sum over the steps (the
+// column chooser's order); cached per series object.
+const SERIES_COLS = 5;  // columns shown by default: the largest by sum
+const seriesOrderCache = new WeakMap();
+function seriesOrder(ser) {
+  let order = seriesOrderCache.get(ser);
+  if (!order) {
+    const sums = ser.columns.map((_, j) => ser.values.reduce((a, v) => a + (Number.isFinite(v[j]) ? v[j] : 0), 0));
+    order = ser.columns.map((_, j) => j).sort((a, b) => sums[b] - sums[a] || a - b);
+    order.sums = sums;
+    seriesOrderCache.set(ser, order);
+  }
+  return order;
+}
+// indexes of the columns shown (S.seriesCols, in chooser order), default the SERIES_COLS largest
+function seriesShown(ser) {
+  const order = seriesOrder(ser), chosen = S.seriesCols[ser.name];
+  if (!chosen) return order.slice(0, SERIES_COLS);
+  const set = new Set(chosen);
+  return order.filter(j => set.has(ser.columns[j]));
+}
+function setSeriesCols(ser, cols) { S.seriesCols[ser.name] = cols; renderSeries(); }
+// Data/Plot tabs and the Columns ▾ chooser (check boxes in descending order of sum)
+function seriesViewBar(ser, shown) {
+  const tab = (key, text) => h("button", { role: "tab", class: "steps-tab" + (S.seriesTab === key ? " active" : ""),
+    "aria-selected": String(S.seriesTab === key), onclick: () => { S.seriesTab = key; renderSeries(); } }, text);
+  const order = seriesOrder(ser), on = new Set(shown.map(j => ser.columns[j]));
+  const wasOpen = $("#series-cols-menu")?.classList.contains("open");
+  const pick = cols => setSeriesCols(ser, cols);
+  const menu = h("div", { id: "series-cols-menu", class: "dropdown left series-cols" + (wasOpen ? " open" : ""), role: "menu" },
+    h("div", { class: "series-cols-actions" },
+      h("button", { onclick: () => pick(order.slice(0, SERIES_COLS).map(j => ser.columns[j])) }, `Largest ${SERIES_COLS}`),
+      h("button", { onclick: () => pick(ser.columns.slice()) }, "All"),
+      h("button", { onclick: () => pick([]) }, "None")),
+    h("div", { class: "sep" }, "By sum over the steps, largest first"),
+    h("div", { class: "series-cols-list" }, order.map(j => h("label", { title: seriesTitle(ser.columns[j]) },
+      h("input", { type: "checkbox", checked: on.has(ser.columns[j]), onchange: e => {
+        const cols = order.map(k => ser.columns[k]).filter(n => n === ser.columns[j] ? e.target.checked : on.has(n));
+        pick(cols);
+      } }), ` ${ser.columns[j]}`, h("span", { class: "unit" }, fmt(order.sums[j], 1))))));
+  return h("div", { class: "series-view-bar" },
+    h("div", { class: "steps-tabs", role: "tablist", "aria-label": "Series view" }, tab("data", "Data"), tab("plot", "Plot")),
+    h("div", { class: "menu" }, h("button", { "data-menu": "series-cols-menu", title: "Choose the columns shown in the table and the plot" },
+      `Columns (${shown.length} of ${ser.columns.length}) ▾`), menu));
+}
+// Plot of the shown columns of `ser` over its steps (vendored Plotly, as the
+// Results step plot): zoom kept per series (uirevision); a click on a point
+// chooses that step for Copy to case (renderSeriesStep).
+const seriesPlotEl = h("div", { id: "series-plot", class: "steps-plot" });
+function seriesPlot(ser, shown) {
+  const times = ser.index.map(x => { const m = STEP_TIME.exec(String(x)); return m ? `${m[1]} ${m[2]}` : null; });
+  const date = ser.timed && times.every(x => x), x = date ? times : ser.index.map((_, i) => i + 1);
+  const traces = shown.map(j => ({ type: "scatter", mode: ser.values.length > 400 ? "lines" : "lines+markers",
+    marker: { size: 3 }, name: ser.columns[j], x, y: ser.values.map(v => v[j]) }));
+  const row = seriesStepRow(ser);
+  const units = [...new Set(shown.map(j => (ser.columns[j].split(".")[1] === "Qd" ? "MVAr" : "MW")))].join(", ");
+  const layout = { uirevision: `series:${ser.name}`, height: 420, margin: { l: 60, r: 20, t: 10, b: 50 },
+    hovermode: "x unified", legend: { orientation: "h", y: -0.2 },
+    xaxis: { title: { text: date ? "time" : "step" }, type: date ? "date" : "linear" },
+    yaxis: { title: { text: units || "value" } },
+    shapes: row >= 0 ? [{ type: "line", xref: "x", yref: "paper", x0: x[row], x1: x[row], y0: 0, y1: 1, line: { color: "#c47f17", width: 1.5, dash: "dot" } }] : [] };
+  const name = `${(S.state.case.name || "case").replace(/[^\w.-]+/g, "_")}_${ser.name.replace(/[^\w.-]+/g, "_")}`;
+  const config = { responsive: true, displaylogo: false, scrollZoom: true, showSendToCloud: false,
+    modeBarButtonsToRemove: ["sendDataToCloud", "select2d", "lasso2d"], toImageButtonOptions: { format: "png", filename: name, scale: 2 } };
+  seriesPlotEl.dataset.series = ser.name;
+  loadPlotly().then(P => {
+    P.react(seriesPlotEl, traces, layout, config);
+    if (!seriesPlotEl.dataset.bound) {  // a click on a point chooses that step (Step check box on)
+      seriesPlotEl.dataset.bound = "1";
+      seriesPlotEl.on("plotly_click", ev => {
+        const p = ev.points && ev.points[0], cur = currentSeries();
+        if (!p || !cur) return;
+        const comb = S.state.case.series_combined;
+        const at = S.state.case.series.length < 2 ? p.pointIndex : comb.index.findIndex(l => String(l) === String(cur.index[p.pointIndex]));
+        if (at < 0) return toast("That step is not in the combined series", true);
+        S.seriesStep.on = true;
+        setSeriesStep(at);
+      });
+    }
+  }).catch(err => { seriesPlotEl.replaceChildren(h("div", { class: "empty" }, `No plot: ${err.message}`)); });
+  return h("div", { class: "steps-plot-wrap series-plot-wrap" }, shown.length ? seriesPlotEl : h("div", { class: "empty" }, "No columns chosen: use Columns ▾."),
+    h("div", { class: "hint" }, "Drag to zoom, double-click to reset; the toolbar pans, zooms and saves the plot as a PNG. Click a point to choose that step (for Copy to case). Click a legend entry to hide or show it."));
 }
 async function importSeries(file) {
   const data = await fileBase64(file), opt = S.importReq || {}, panel = opt.panel;
