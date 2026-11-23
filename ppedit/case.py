@@ -1942,7 +1942,8 @@ def {name}():
 
     def _combined_info(self) -> dict|None:
         """Summary of `combined_series` for the browser: `steps`, `columns`,
-        `aligned`, `index` (first and last label) or `error`"""
+        `aligned`, `delta`, `first` and `last` labels, `summed`, `index` (all
+        step labels) or `error`"""
         if not self.series:
             return None
         try:
@@ -1951,7 +1952,7 @@ def {name}():
             return {"error":str(err)}
         return {"steps":len(ser["values"]),"columns":len(ser["columns"]),"aligned":ser["aligned"],
             "delta":ser["delta"],"first":ser["index"][0],"last":ser["index"][-1],
-            "summed":len(ser["summed"])}
+            "summed":len(ser["summed"]),"index":list(ser["index"])}
 
     def series_values(self,table:str,column:str) -> list[list[float]]:
         """Return the values of `table.column` at every step of the series:
@@ -1991,6 +1992,32 @@ def {name}():
             k = [c["name"] for c in COLUMNS[table]].index(column)
             case.tables[table][n][k] = value
         return case
+
+    def apply_step(self,step:int) -> int:
+        """Copy the values of series step `step` (counted from 0) of
+        `combined_series` into the case tables, through `set_value`; return
+        the number of values that changed. The series is kept.
+
+        >>> case = Case.builtin("case9")
+        >>> _ = case.set_series(["bus.Pd.5","gen.Pmax.1"],[[80,250],[120,200]],["a","b"])
+        >>> case.apply_step(1)
+        2
+        >>> case.tables["bus"][4][2],case.tables["gen"][0][8]
+        (120.0, 200.0)
+        """
+        ser = self.combined_series()
+        if not ser or not 0 <= step < len(ser["values"]):
+            raise CaseError(f"the case has no series step {step+1}")
+        where = {r[0]:n for n,r in enumerate(self.tables["bus"])}
+        changed = 0
+        for name,value in zip(ser["columns"],ser["values"][step]):
+            table,column,key = name.split(".")
+            n = where[int(key)] if table == "bus" else int(key) - 1
+            k = [c["name"] for c in COLUMNS[table]].index(column)
+            if self.tables[table][n][k] != value:
+                self.set_value(table,n,column,value)
+                changed += 1
+        return changed
 
     def _series_input(self) -> dict:
         """Per-step case values for `ppedit._cvxopf.runopf` (`series` argument);

@@ -551,3 +551,20 @@ def test_multistep_builder_options():
     with pytest.raises((CaseError,ValueError),match="enforce_branch_limits off"):
         case.solve("opf","CVXOPF-AC",{"multistep":{"sparsity_tol":1e-6}},multistep=True)
     assert case.solve("opf","CVXOPF-DC",{"multistep":{"sparsity_tol":1e-6}},multistep=True)["success"]
+
+def test_series_apply_step(post):
+    """Copy to case: one undoable edit setting every series value of the step"""
+    text = "time,bus.Pd.5,gen.Pmax.1\n2020-08-01 00:00:00+00:00,90,250\n2020-08-01 01:00:00+00:00,120,200\n"
+    status,st = post("/api/series/import",{"filename":"s.csv","data":_b64(text)})
+    assert st["case"]["series_combined"]["index"] == ["2020-08-01 00:00:00+00:00","2020-08-01 01:00:00+00:00"]
+    status,st = post("/api/series/apply",{"step":1})
+    assert status == 200 and st["applied"] == {"step":1,"label":"2020-08-01 01:00:00+00:00","changed":2}
+    assert st["case"]["tables"]["bus"][4][2] == 120 and st["case"]["tables"]["gen"][0][8] == 200
+    assert st["case"]["series"] and st["dirty"]
+    status,st = post("/api/series/apply",{"step":1})
+    assert st["applied"]["changed"] == 0
+    status,st = post("/api/undo")
+    assert st["case"]["tables"]["bus"][4][2] == 90 and st["case"]["tables"]["gen"][0][8] == 250
+    for bad in (2,-1,"x"):
+        status,st = post("/api/series/apply",{"step":bad})
+        assert status == 400 and "step" in st["error"]

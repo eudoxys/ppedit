@@ -310,8 +310,11 @@ API key to start sessions; tests use a fake client).
   draws case loads for a multistep step. `Case.series` is a list of named
   series combined by `Case.combined_series` (used by `series_values`,
   `at_step`, `_series_input`; a column in several series is summed);
-  state `series_combined` carries its summary
-  or error, and `currentSeries()`/`S.seriesName` pick the one shown.
+  state `series_combined` carries its summary (with all step labels,
+  `index`) or error, and `currentSeries()`/`S.seriesName` pick the one shown.
+  Step controls and Copy to case (`renderSeriesStep`, `S.seriesStep`,
+  `stepTimes`, `POST /api/series/apply`, `Case.apply_step`) work on
+  combined steps; `seriesStepRow` maps the step to the shown series' row.
   Panels (decision #61,
   `Case.set_series_panel`, `geohash` in `case.py`, `panel` of
   `/api/series/import`, `openPanelDialog` in `app.js`) locate elements by
