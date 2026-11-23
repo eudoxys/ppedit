@@ -9,7 +9,11 @@ the inputs and messages as pickles over its stdin and stdout, relays the child's
 reports to the job, and returns the child's result. `SolveJob.stop()`
 kills the child: IPOPT, CLARABEL and CVXPY's model building run in C code,
 which a Python thread cannot interrupt, so a process is the only way to
-stop a solve at any point. Running in a child also keeps the server alive
+stop a solve at any point. The child runs in its own session (process
+group) and ignores SIGINT from its first statement, so Ctrl-C in the
+terminal running the server (or a SIGINT sent to the server's process
+group) does not interrupt a solve; children still running when the
+server exits are killed (`_kill_running`, `atexit`). Running in a child also keeps the server alive
 when a solve runs out of memory (the operating system kills the child) and
 returns the solver's memory to the system when the solve ends.
 
@@ -33,16 +37,41 @@ Caveats
     ends: a stopped solve has the progress reports in its log instead.
 """
 
+import atexit
 import io
 import os
 import pickle
 import queue
+import signal
 import subprocess
 import sys
 import threading
 import time
 
-_CHILD = "from ppedit._solveproc import _main; _main()"
+_CHILD = ("import signal; signal.signal(signal.SIGINT,signal.SIG_IGN); "  # first: see _detached
+    "from ppedit._solveproc import _main; _main()")
+
+_RUNNING = set()
+"""Child processes now solving, killed when the server process exits"""
+_RUNNING_LOCK = threading.Lock()
+
+@atexit.register
+def _kill_running():
+    """Kill the solver processes still running (the server is stopping, e.g.
+    Ctrl-C), so none is left behind"""
+    with _RUNNING_LOCK:
+        procs = list(_RUNNING)
+    for proc in procs:
+        if proc.poll() is None:
+            proc.kill()
+
+def _detached() -> dict:
+    """`subprocess.Popen` arguments that keep the child out of the
+    terminal's process group, so Ctrl-C (SIGINT) in the terminal running
+    the server does not interrupt the solver: only `SolveJob.stop()` ends it"""
+    if os.name == "nt":
+        return {"creationflags":subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session":True}
 """Python code the child process runs"""
 
 POLL = 0.25
@@ -112,6 +141,7 @@ def _main():
     `("error", message, log)`, to the original stdout. File descriptor 1
     is pointed at stderr first, so what the solver prints cannot corrupt
     the messages."""
+    signal.signal(signal.SIGINT,signal.SIG_IGN)  # stopped only by SolveJob.stop() (SIGKILL)
     out = os.fdopen(os.dup(1),"wb")
     os.dup2(2,1)
     sys.stdout = sys.stderr
@@ -156,7 +186,9 @@ def run(job:SolveJob,ppc:dict,formulation:str,log,options:dict|None=None,
     env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     job.report({"phase":"start","text":"starting the solver process"})
     proc = subprocess.Popen([sys.executable,"-c",_CHILD],env=env, # pylint: disable=consider-using-with
-        stdin=subprocess.PIPE,stdout=subprocess.PIPE)
+        stdin=subprocess.PIPE,stdout=subprocess.PIPE,**_detached())
+    with _RUNNING_LOCK:
+        _RUNNING.add(proc)
     job.stoppable = True
     messages = queue.Queue()
     threading.Thread(target=_reader,args=(proc.stdout,messages),daemon=True).start()
@@ -201,4 +233,6 @@ def run(job:SolveJob,ppc:dict,formulation:str,log,options:dict|None=None,
             proc.kill()
         proc.wait()
         proc.stdout.close()
+        with _RUNNING_LOCK:
+            _RUNNING.discard(proc)
 
