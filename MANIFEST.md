@@ -99,8 +99,7 @@ Update this file in the same PR that adds, moves, or deletes a file.
 | `examples/ieee118/check_tracy2021.py` | checks the study cases against `pes2027-reproduction-inputs.zip` (inputs, frozen model inputs, window and year solves) | needs the archive and cvxopf; `--year` a few minutes, `--year-ppedit` ~30 min |
 | `examples/ieee118/case118_tracy2021_*.py` | the six 24-hour study cases (series, storage, renewables, shedding) | written by `build_tracy2021.py`; don't edit; ~200 kB each, use `head`; tested by `_test/test_ieee118.py` |
 | `examples/ieee118/SHA256SUMS` | SHA-256 of the ten reproduction input files, by cvxopf clone path | |
-| `examples/ieee118/install_inputs.py` | installs the inputs into a cvxopf clone and checks their hashes | three large records read from the archive ZIP |
-| `examples/ieee118/experiments/**` | six small study records the cvxopf code checks, at their cvxopf clone paths | byte copies from the archive; don't edit (hash-checked) |
+| `examples/ieee118/install_inputs.py` | installs the inputs into a cvxopf clone and checks their hashes | the CSV from this folder, the nine study records from the archive ZIP |
 | `examples/wecc240/README.md` | provenance of the WECC 240 examples | |
 | `examples/wecc240/wecc240_case.raw` | WECC 240-bus case as PSS/E revision 34 (see `examples/wecc240/README.md`) | from NREL (see file header); ~220 kB, use `head`; tested by `_test/test_psse.py` |
 | `examples/wecc240/wecc240_bus.csv` | WECC 240 bus index: row, PSS/E bus number, name, PYPOWER `bus_i` | from NREL |

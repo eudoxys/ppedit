@@ -18,7 +18,6 @@ This folder holds the Case118 experiments of the IEEE PES General Meeting
 | File | Purpose |
 | --- | --- |
 | `9q9wtp_gen_and_load.csv` | the external source data: modeled Tracy, California demand, utility solar, utility wind and distributed solar profiles (installed as `experiments/battery_terminal/data/9q9wtp_gen_and_load.csv`) |
-| `experiments/` | six of the nine earlier study records, at their cvxopf clone paths (`stage_c` binding, study result, analysis and the two `completion.json`; `e3/binding.json`) |
 | `SHA256SUMS` | SHA-256 of all ten archive files, by cvxopf clone path |
 | `install_inputs.py` | installs the files into a cvxopf clone and checks them against `SHA256SUMS` |
 | `case118.py` | the PYPOWER IEEE 118-bus case (same as `../pypower/case118.py`): the starting point of the study case files |
@@ -27,17 +26,12 @@ This folder holds the Case118 experiments of the IEEE PES General Meeting
 | `build_tracy2021.py` | writes the study case files (and the annual one) from the files above |
 | `check_tracy2021.py` | checks the study case files against the reproduction archive (see below) |
 
-The three largest study records (about 138 MB together) are **not** in this
-repository:
-
-- `experiments/case118_tracy_2021/results/stage_c/arm-000/result.json.gz` (46 MB)
-- `experiments/case118_tracy_2021/results/stage_c/arm-001/result.json.gz` (75 MB)
-- `experiments/objective_assembly_qualification/results/qualification_002/binding.json` (16 MB)
-
-The cvxopf code checks them by hash, so they must be the original files:
-get them from `pes2027-reproduction-inputs.zip`. The study records are
-copied byte for byte (their hashes are checked), so they keep the original
-machine's paths.
+The nine earlier study records under `experiments/` (the largest three are
+about 138 MB together) are **not** in this repository: the cvxopf code
+checks them by hash, so they must be the original files, from
+`pes2027-reproduction-inputs.zip`. Neither the study case files nor
+`build_tracy2021.py` need them; `install_inputs.py` and
+`check_tracy2021.py` read them from the ZIP.
 
 ## Study case files
 
@@ -166,8 +160,8 @@ python3 /path/to/ppedit/examples/ieee118/install_inputs.py . "$archive"
 where `$archive` is the ZIP or a directory holding the same `experiments/`
 tree. Like `unzip -n`, it does not overwrite files already in the clone;
 it then checks all ten files and exits 1 if one is missing or differs.
-Without the second argument it installs the seven files kept here and
-lists the three missing ones. The rest of the steps are unchanged.
+Without the second argument it installs only the CSV and lists the nine
+missing study records. The rest of the steps are unchanged.
 
 ## Reproduce the Case118 PES experiments from a fresh CVXOPF clone
 

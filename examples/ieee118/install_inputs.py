@@ -7,17 +7,12 @@ cvxopf clone root) into the clone, as step 1 of `README.md` does with
 `unzip -n "$archive" 'experiments/*'`. Run it at that point, after
 `git switch --detach 2edc6d3b...` and before `git status --porcelain`.
 
-Seven files come from this folder: `9q9wtp_gen_and_load.csv` and the small
-study records under `experiments/`. The three large study records
-
-- `experiments/case118_tracy_2021/results/stage_c/arm-000/result.json.gz`
-- `experiments/case118_tracy_2021/results/stage_c/arm-001/result.json.gz`
-- `experiments/objective_assembly_qualification/results/qualification_002/binding.json`
-
-are not kept in this repository (about 138 MB together). They are read
-from SOURCE: `pes2027-reproduction-inputs.zip` or a directory holding the
-same `experiments/` tree. Without SOURCE only the seven local files are
-installed and the missing ones are listed.
+`9q9wtp_gen_and_load.csv` comes from this folder. The nine earlier study
+records under `experiments/` are not kept in this repository (the largest
+three are about 138 MB together); they are read from SOURCE:
+`pes2027-reproduction-inputs.zip` or a directory holding the same
+`experiments/` tree. Without SOURCE only the CSV is installed and the
+missing records are listed.
 
 Files already in the clone are not overwritten (like `unzip -n`); every
 file is then checked against `SHA256SUMS`. Exits 1 if a file is missing
@@ -35,7 +30,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 LOCAL = {
     "experiments/battery_terminal/data/9q9wtp_gen_and_load.csv": "9q9wtp_gen_and_load.csv",
 }
-"""Clone paths whose source in this folder has a different name"""
+"""Clone paths of the files kept in this folder, and their names here"""
 
 def checksums() -> dict[str,str]:
     """Expected SHA-256 by clone-relative path, from `SHA256SUMS`"""
@@ -57,8 +52,8 @@ def sha256(path:str) -> str:
 
 def local_source(name:str) -> str|None:
     """Path of a file kept in this folder, or None"""
-    path = os.path.join(HERE,LOCAL.get(name,name))
-    return path if os.path.isfile(path) else None
+    path = os.path.join(HERE,LOCAL[name]) if name in LOCAL else None
+    return path if path and os.path.isfile(path) else None
 
 def install(clone:str,source:str|None=None) -> int:
     """Install the inputs into `clone`; return the exit status"""
