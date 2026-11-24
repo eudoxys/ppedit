@@ -1,9 +1,9 @@
 The WECC 240 data was developed from the original WECC 240 PSS/E file
 `wecc240_case.raw` originally created by CAISO and redistributed by NLR. This
-represents the original 2011 WECC system model. 
+represents the original 2011 WECC system model [1]. 
 
 The file `wecc240_case.py` is
-updated with the `wecc240_*.csv` files from NLR and represents the system as of 2018. 
+updated with the `wecc240_*.csv` files from NLR and represents the system as of 2018 [2]. 
 
 The GLM and JSON files currently represent the WECC system using the same model as the PY file (2018 system) but will eventually represent the 2020 system from NLR when it becomes available.
 
@@ -207,3 +207,18 @@ of August with no column in two series, that the panel has no column for a
 storage generator, and that the case validates; on a problem it reports it
 and does not save. `--check` only runs the checks. Run it after changing
 any of those files (after `build_wecc240_generation.py` for the panel).
+
+## References
+
+1. J. E. Price and J. Goodin, "Reduced network modeling of WECC as a
+   market design prototype," in *2011 IEEE Power and Energy Society General
+   Meeting*, 2011, pp. 1-6. (The 2011 model, `wecc240_case.raw` and
+   `wecc240_2011.py`.)
+2. H. Yuan, R. S. Biswas, J. Tan, and Y. Zhang, "Developing a reduced
+   240-bus WECC dynamic model for frequency response study of high renewable
+   integration," in *2020 IEEE/PES Transmission and Distribution Conference
+   and Exposition (T&D)*, Chicago, IL, USA, Oct. 12-15, 2020. Preprint:
+   National Renewable Energy Laboratory, NREL/CP-5D00-74481,
+   https://www.nrel.gov/docs/fy21osti/74481.pdf. (The 2018 model,
+   `wecc240_2018.py`: the generation resource mix of the Western
+   Interconnection as of 2018.)
