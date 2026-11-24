@@ -84,3 +84,7 @@ the device model's: with tolerances of 1e-10, one-day copper-plate windows
 end up to about 1e-5 (relative) above the optimum and some do not solve,
 where the device model solves them to about 1e-9 (see the rough edges in
 `CLAUDE.md`).
+
+## References
+
+1. Meyers BE, "Network-Model Fidelity in Intertemporal Storage Dispatch: A Matched Study with CVXOPF," IEEE PES 2027 General Meeting, submitted 10 Nov 2026. 
