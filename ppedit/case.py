@@ -560,7 +560,14 @@ def _costs_list(text):
         raise CaseError(f"costs '{text}' must be comma-separated numbers") from err
 
 def _costs_text(values):
-    return ",".join(f"{x:g}" for x in values)
+    """Cost coefficients as comma-separated text that reads back exactly
+    (shortest round-trip form, without a trailing `.0`)"""
+    return ",".join(_exact(x) for x in values)
+
+def _exact(value):
+    """Shortest text of a number that reads back as the same float"""
+    text = repr(float(value))
+    return text[:-2] if text.endswith(".0") else text
 
 def _fmt(value):
     """Format a number compactly for case files"""

@@ -334,6 +334,22 @@ API key to start sessions; tests use a fake client).
   with or without `automatic_sparse_dispatch`; 24 steps did not fit in
   7 GB), while the DC models are light (case118, 24 steps: about 1 s).
 
+- Multistep OPF accuracy (CLARABEL) in ppedit's form (renewables and load
+  shedding as generators with per-step `Pmax`, storage as discharge and
+  charge generators) is worse than in cvxopf's own device model of the same
+  problem: on the `examples/ieee118` Tracy cases with the study's
+  tolerances (1e-10), one-day copper-plate windows end `optimal` up to
+  ~3e-6 (relative) above the optimum and one-week windows often end
+  `optimal_inaccurate` (which `runopf` accepts as success) up to ~1e-4
+  above it, while the device model (`build_tracy2021.cvxopf_inputs`)
+  solves the same weeks to ~1e-9. Not caused by the shedding cost alone
+  (removing the shedding generators helps, scaling their cost does not).
+  The full year (8760 steps) does not fit in 7 GB. More equilibration
+  (`equilibrate_max_iter=50` in the CLARABEL options) rescues some windows
+  that fail with insufficient progress.
+- Generator cost text (`_costs_text`, the `costs` string of `gencost` rows)
+  is written in shortest round-trip form; it was `:g` (6 significant
+  digits) until the Tracy cases needed exact costs.
 - Storage (decision #62, issue #128): `COLUMNS["storage"]`, cascades in
   `set_value`/`add_row`/`delete_rows`, `_dump_glm_storage` (`pp_storage`
   runtime class), `_series_input` `storage` in `case.py`;
