@@ -344,9 +344,9 @@ API key to start sessions; tests use a fake client).
   above it, while the device model (`build_tracy2021.cvxopf_inputs`)
   solves the same weeks to ~1e-9. Not caused by the shedding cost alone
   (removing the shedding generators helps, scaling their cost does not).
-  The full year (8760 steps) does not fit in 7 GB. `check_tracy2021.py`
-  treats `optimal_inaccurate` as a failure and retries with
-  `equilibrate_max_iter=50`.
+  The full year (8760 steps) does not fit in 7 GB. More equilibration
+  (`equilibrate_max_iter=50` in the CLARABEL options) rescues some windows
+  that fail with insufficient progress.
 - Generator cost text (`_costs_text`, the `costs` string of `gencost` rows)
   is written in shortest round-trip form; it was `:g` (6 significant
   digits) until the Tracy cases needed exact costs.

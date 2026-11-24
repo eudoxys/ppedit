@@ -90,16 +90,13 @@ Update this file in the same PR that adds, moves, or deletes a file.
 | `examples/pypower/LICENSE-cvxopf` | cvxopf BSD license | applies to `case9_dcline.py` |
 | `examples/pypower/case*.glm` | the same cases as `module pypower` GLM models | generated; don't edit; case300.glm ~250 kB, use `head` |
 | `examples/README.md` | summary of the example folders | |
-| `examples/ieee118/README.md` | how to reproduce the IEEE PES GM 2027 Case118 experiments with cvxopf, and what this folder holds | instructions from the paper's reproduction archive, with a section for this folder |
-| `examples/ieee118/9q9wtp_gen_and_load.csv` | modeled Tracy, CA demand, utility solar, wind and distributed solar profiles (source data of the experiments) | from the reproduction archive; ~2.8 MB, use `head`; hash in `SHA256SUMS` |
+| `examples/ieee118/README.md` | the Tracy 2021 IEEE 118-bus study cases: what they hold and how they are made | |
+| `examples/ieee118/9q9wtp_gen_and_load.csv` | modeled Tracy, CA demand, utility solar, wind and distributed solar profiles (source data of the study cases) | ~2.8 MB, use `head` |
 | `examples/ieee118/case118.py` | PYPOWER IEEE 118-bus case: starting point of the study cases | same as `examples/pypower/case118.py`; don't edit |
-| `examples/ieee118/pglib_opf_case118_ieee.m` | PGLib-OPF v23.07 IEEE 118-bus case used by the experiments (network limits and costs) | from cvxopf (PGLib revision dc6be4b2); ~80 kB, use `head`; don't edit |
+| `examples/ieee118/pglib_opf_case118_ieee.m` | PGLib-OPF v23.07 IEEE 118-bus case (network limits and costs of the study cases) | from cvxopf (PGLib revision dc6be4b2); ~80 kB, use `head`; don't edit |
 | `examples/ieee118/LICENSE-pglib` | PGLib-OPF license (data CC BY 4.0) | applies to `pglib_opf_case118_ieee.m` and the study cases |
 | `examples/ieee118/build_tracy2021.py` | writes the study case files from the CSV, `case118.py` and the PGLib case; `cvxopf_inputs` turns a case back into the study's cvxopf device model | maintenance script; `annual` (~42 MB) only on request |
-| `examples/ieee118/check_tracy2021.py` | checks the study cases against `pes2027-reproduction-inputs.zip` (inputs, frozen model inputs, window and year solves) | needs the archive and cvxopf; `--year` a few minutes, `--year-ppedit` ~30 min |
 | `examples/ieee118/case118_tracy2021_*.py` | the six 24-hour study cases (series, storage, renewables, shedding) | written by `build_tracy2021.py`; don't edit; ~200 kB each, use `head`; tested by `_test/test_ieee118.py` |
-| `examples/ieee118/SHA256SUMS` | SHA-256 of the ten reproduction input files, by cvxopf clone path | |
-| `examples/ieee118/install_inputs.py` | installs the inputs into a cvxopf clone and checks their hashes | the CSV from this folder, the nine study records from the archive ZIP |
 | `examples/wecc240/README.md` | provenance of the WECC 240 examples | |
 | `examples/wecc240/wecc240_case.raw` | WECC 240-bus case as PSS/E revision 34 (see `examples/wecc240/README.md`) | from NREL (see file header); ~220 kB, use `head`; tested by `_test/test_psse.py` |
 | `examples/wecc240/wecc240_bus.csv` | WECC 240 bus index: row, PSS/E bus number, name, PYPOWER `bus_i` | from NREL |
