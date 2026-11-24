@@ -89,7 +89,12 @@ Update this file in the same PR that adds, moves, or deletes a file.
 | `examples/pypower/LICENSE-cvxopf` | cvxopf BSD license | applies to `case9_dcline.py` |
 | `examples/pypower/case*.glm` | the same cases as `module pypower` GLM models | generated; don't edit; case300.glm ~250 kB, use `head` |
 | `examples/README.md` | summary of the example folders | |
-| `examples/ieee118/README.md` | the IEEE 118-bus example to come (TODO; from Bennet Meyers' IEEE PES GM 2027 paper) | placeholder |
+| `examples/ieee118/README.md` | how to reproduce the IEEE PES GM 2027 Case118 experiments with cvxopf, and what this folder holds | instructions from the paper's reproduction archive, with a section for this folder |
+| `examples/ieee118/9q9wtp_gen_and_load.csv` | modeled Tracy, CA demand, utility solar, wind and distributed solar profiles (source data of the experiments) | from the reproduction archive; ~2.8 MB, use `head`; hash in `SHA256SUMS` |
+| `examples/ieee118/case118.py` | PYPOWER IEEE 118-bus case | same as `examples/pypower/case118.py`; don't edit |
+| `examples/ieee118/SHA256SUMS` | SHA-256 of the ten reproduction input files, by cvxopf clone path | |
+| `examples/ieee118/install_inputs.py` | installs the inputs into a cvxopf clone and checks their hashes | three large records read from the archive ZIP |
+| `examples/ieee118/experiments/**` | six small study records the cvxopf code checks, at their cvxopf clone paths | byte copies from the archive; don't edit (hash-checked) |
 | `examples/wecc240/README.md` | provenance of the WECC 240 examples | |
 | `examples/wecc240/wecc240_case.raw` | WECC 240-bus case as PSS/E revision 34 (see `examples/wecc240/README.md`) | from NREL (see file header); ~220 kB, use `head`; tested by `_test/test_psse.py` |
 | `examples/wecc240/wecc240_bus.csv` | WECC 240 bus index: row, PSS/E bus number, name, PYPOWER `bus_i` | from NREL |

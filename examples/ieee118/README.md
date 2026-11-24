@@ -1,4 +1,51 @@
-# Reproduce the Case118 PES experiments from a fresh CVXOPF clone
+# IEEE 118-bus Tracy 2021 example (IEEE PES GM 2027)
+
+This folder holds the inputs for reproducing the Case118 experiments of the
+IEEE PES General Meeting 2027 paper submitted by Bennet Meyers (November
+2026) with [cvxopf](https://github.com/cvxgrp/cvxopf). The instructions
+below come from the paper's reproduction archive,
+`pes2027-reproduction-inputs.zip`; this section says how the files here
+stand in for that archive.
+
+## Files in this folder
+
+| File | Purpose |
+| --- | --- |
+| `9q9wtp_gen_and_load.csv` | the external source data: modeled Tracy, California demand, utility solar, utility wind and distributed solar profiles (installed as `experiments/battery_terminal/data/9q9wtp_gen_and_load.csv`) |
+| `experiments/` | six of the nine earlier study records, at their cvxopf clone paths (`stage_c` binding, study result, analysis and the two `completion.json`; `e3/binding.json`) |
+| `SHA256SUMS` | SHA-256 of all ten archive files, by cvxopf clone path |
+| `install_inputs.py` | installs the files into a cvxopf clone and checks them against `SHA256SUMS` |
+| `case118.py` | the PYPOWER IEEE 118-bus case (same as `../pypower/case118.py`); the experiments use the PGLib case in the cvxopf repository |
+
+The three largest study records (about 138 MB together) are **not** in this
+repository:
+
+- `experiments/case118_tracy_2021/results/stage_c/arm-000/result.json.gz` (46 MB)
+- `experiments/case118_tracy_2021/results/stage_c/arm-001/result.json.gz` (75 MB)
+- `experiments/objective_assembly_qualification/results/qualification_002/binding.json` (16 MB)
+
+The cvxopf code checks them by hash, so they must be the original files:
+get them from `pes2027-reproduction-inputs.zip`. The study records are
+copied byte for byte (their hashes are checked), so they keep the original
+machine's paths.
+
+## Installing the inputs
+
+In step 1 below, replace the line `unzip -n "$archive" 'experiments/*'`
+with (from the cvxopf clone root, `ppedit` being a clone of this
+repository)
+
+```sh
+python3 /path/to/ppedit/examples/ieee118/install_inputs.py . "$archive"
+```
+
+where `$archive` is the ZIP or a directory holding the same `experiments/`
+tree. Like `unzip -n`, it does not overwrite files already in the clone;
+it then checks all ten files and exits 1 if one is missing or differs.
+Without the second argument it installs the seven files kept here and
+lists the three missing ones. The rest of the steps are unchanged.
+
+## Reproduce the Case118 PES experiments from a fresh CVXOPF clone
 
 This ZIP supplies the inputs missing from Git. You will generate your **own**
 24 joint solutions, use their battery powers in 18 fixed-schedule AC transfers,
@@ -6,7 +53,7 @@ and use their battery energies as targets in 24 three-hour AC rollouts. The ZIP
 contains none of those solutions. Run the steps in order in **one fresh clone**:
 the recorded code revisions change, but your ignored result directories stay in place.
 
-## 1. Install the inputs and environment
+### 1. Install the inputs and environment
 
 Use a fresh clone of <https://github.com/cvxgrp/cvxopf>. The historical joint
 and transfer runners require macOS, AC power, working `ps` process/RSS queries,
@@ -24,7 +71,7 @@ Keep the default run directory names: downstream programs read those paths.
 archive=/absolute/path/to/pes2027-reproduction-inputs.zip
 unzip -tq "$archive"
 git switch --detach 2edc6d3bbeac85bd78f5bf6d9cdc387f851eb0f0
-unzip -n "$archive" 'experiments/*'
+unzip -n "$archive" 'experiments/*'  # or: python3 /path/to/ppedit/examples/ieee118/install_inputs.py . "$archive"
 git status --porcelain                # must be empty
 syncenv() { uv sync --frozen --python 3.11.15 --extra dev --extra notebook; }
 syncenv
@@ -39,7 +86,7 @@ This regenerates the annual inputs in the location the runners read, without
 overwriting the **tracked** Stage A manifest or device tables. Stop on any failed
 command or hash mismatch. Do not use an existing study directory.
 
-### What is in the ZIP?
+#### What is in the ZIP?
 
 The only external **source data** is
 `experiments/battery_terminal/data/9q9wtp_gen_and_load.csv`
@@ -58,7 +105,7 @@ The other **nine files** are earlier study records the published code checks:
 | `experiments/objective_assembly_qualification/results/qualification_002/binding.json` | Exact physical input specification for forced shedding: same deficit window and battery endpoints, with requested P and Q both multiplied by 7.5416905141946184. |
 | `experiments/case118_tracy_2021/results/e3/binding.json` | Earlier study identity checked by the transfer and rollout code. It supplies no donor solution. |
 
-## 2. Solve the 24 joint problems
+### 2. Solve the 24 joint problems
 
 The first revision solves five 24-hour scenarios under copper plate, network
 flow, SOCP and full AC. The second adds the forced-shedding scenario under the
@@ -89,7 +136,7 @@ run raised its per-attempt wall ceiling from 1,800 to 3,600 seconds during
 execution; the default starts at 1,800. Record any budget revision using the
 runner's protocol mechanism, not by editing a result or changing tolerances.
 
-## 3. Run the 18 fixed-power transfers
+### 3. Run the 18 fixed-power transfers
 
 ```sh
 git switch --detach 4fbd85f3bd80a573edac4da284e325804f1d77a3
@@ -107,7 +154,7 @@ Keep all 18 outcomes, including rejections or timeouts. A failed transfer is
 not by itself proof of infeasibility and does not disqualify its joint schedule
 as a source of energy targets.
 
-## 4. Run the 24 energy-signpost rollouts
+### 4. Run the 24 energy-signpost rollouts
 
 Each rollout targets the individual battery energies from **a joint solution**,
 including the joint AC control. It solves a three-hour AC window (shortened at
@@ -153,7 +200,7 @@ rollout --run --output "$runroot" --authority "$controls/approval.json"
 rollout --status --output "$runroot"
 ```
 
-## Compare your results
+### Compare your results
 
 Compare joint outcomes, fixed transfers and **executed** rollout actions
 (not overlapping window forecasts) on device cost, energy not served,
