@@ -1,11 +1,17 @@
 # IEEE 118-bus Tracy 2021 example (IEEE PES GM 2027)
 
-This folder holds the inputs for reproducing the Case118 experiments of the
-IEEE PES General Meeting 2027 paper submitted by Bennet Meyers (November
-2026) with [cvxopf](https://github.com/cvxgrp/cvxopf). The instructions
-below come from the paper's reproduction archive,
-`pes2027-reproduction-inputs.zip`; this section says how the files here
-stand in for that archive.
+This folder holds the Case118 experiments of the IEEE PES General Meeting
+2027 paper submitted by Bennet Meyers (November 2026) two ways:
+
+- **ppedit case files**, one per study, with every input the study's
+  optimization needs (network, generators, renewables, batteries, load
+  shedding, hourly series), to open, edit and solve in ppedit (see
+  [Study case files](#study-case-files));
+- the inputs for reproducing the experiments with
+  [cvxopf](https://github.com/cvxgrp/cvxopf) itself, as the paper's
+  reproduction archive `pes2027-reproduction-inputs.zip` describes (the
+  instructions below come from that archive; the next section says how
+  the files here stand in for it).
 
 ## Files in this folder
 
@@ -15,7 +21,11 @@ stand in for that archive.
 | `experiments/` | six of the nine earlier study records, at their cvxopf clone paths (`stage_c` binding, study result, analysis and the two `completion.json`; `e3/binding.json`) |
 | `SHA256SUMS` | SHA-256 of all ten archive files, by cvxopf clone path |
 | `install_inputs.py` | installs the files into a cvxopf clone and checks them against `SHA256SUMS` |
-| `case118.py` | the PYPOWER IEEE 118-bus case (same as `../pypower/case118.py`); the experiments use the PGLib case in the cvxopf repository |
+| `case118.py` | the PYPOWER IEEE 118-bus case (same as `../pypower/case118.py`): the starting point of the study case files |
+| `pglib_opf_case118_ieee.m`, `LICENSE-pglib` | the PGLib-OPF v23.07 IEEE 118-bus case the experiments use (CC BY 4.0), as pinned in cvxopf (revision `dc6be4b2`) |
+| `case118_tracy2021_*.py` | the six 24-hour study cases (see below) |
+| `build_tracy2021.py` | writes the study case files (and the annual one) from the files above |
+| `check_tracy2021.py` | checks the study case files against the reproduction archive (see below) |
 
 The three largest study records (about 138 MB together) are **not** in this
 repository:
@@ -28,6 +38,120 @@ The cvxopf code checks them by hash, so they must be the original files:
 get them from `pes2027-reproduction-inputs.zip`. The study records are
 copied byte for byte (their hashes are checked), so they keep the original
 machine's paths.
+
+## Study case files
+
+`build_tracy2021.py` writes one ppedit case per study (`python3
+examples/ieee118/build_tracy2021.py [STUDY ...]`, from the repository root):
+
+| Case file | Study | Hours of 2021 (UTC-08:00) | Battery energy start → end |
+| --- | --- | --- | --- |
+| `case118_tracy2021_surplus.py` | joint (E3) large surplus | 3308-3332 (May 18 20:00 to May 19 20:00) | 50% → 50% |
+| `case118_tracy2021_deficit.py` | joint (E3) large deficit | 1165-1189 (Feb 18 13:00 to Feb 19 13:00) | 50% → 50% |
+| `case118_tracy2021_deficit_depletion.py` | joint (E3) deficit depletion | 1165-1189 | 60% → 25% |
+| `case118_tracy2021_surplus_to_deficit.py` | joint (E3) surplus to deficit | 8580-8604 (Dec 27 12:00 to Dec 28 12:00) | 50% → 50% |
+| `case118_tracy2021_deficit_to_surplus.py` | joint (E3) deficit to surplus | 2439-2463 (Apr 12 15:00 to Apr 13 15:00) | 50% → 50% |
+| `case118_tracy2021_forced_shedding.py` | joint (E3+) forced shedding: the large-deficit day with demand (P and Q) times 7.5416905141946184 | 1165-1189 | 50% → 50% |
+| `case118_tracy2021_annual.py` (not in the repository: about 42 MB, write it with `build_tracy2021.py annual`) | annual DC (Stage C) | 0-8760 | 50% → 50% |
+
+Each study was solved in the paper with the copper-plate (`singlenode_dc`,
+ppedit `CVXOPF-1NODE`) and lossy DC (`lossy_dc`, `CVXOPF-DC`) models, and the
+24-hour studies also with SOCP and AC: run **Run OPF ▾ › Multistep OPF**
+with those solvers. The fixed-power transfers and the rollouts have no case
+files of their own: their battery schedules and energy targets come from
+the joint solutions you compute (the rollouts solve three-hour windows of
+the 24-hour cases).
+
+How the cases are made: `case118.py` is the PYPOWER IEEE 118-bus case; the
+study network is the PGLib-OPF version, which has the same buses, branches,
+impedances, loads and generator locations, so the builder keeps
+`case118.py` and takes from `pglib_opf_case118_ieee.m` only the columns
+where the two differ, after checking all the others are equal: bus `Vm`,
+`Va`; generator `Pg`, `Qg`, `Qmax`, `Qmin`, `Vg`, `Pmax`; branch `rateA`,
+`rateB`, `rateC`, `angmin`, `angmax` and the unit `ratio` of branches 86-87 and 68-116 (0 in
+`case118.py`, the same thing); generator cost `c2`, `c1`. The study inputs
+follow cvxopf's `experiments/case118_tracy_2021/prepare.py` (cvxopf
+`2edc6d3b`), with the same seeded random siting:
+
+- the 2021 hours of `9q9wtp_gen_and_load.csv` scaled so the peak net load
+  is 6000 MW; demand shared by the 99 load buses in proportion to their case
+  load (reactive load at each bus's case Q/P ratio);
+- utility solar (10 units) and wind (10) at 15 seeded buses, distributed
+  solar at the 99 load buses; MVA rating 1.1 times the annual peak;
+- 27 ideal batteries (4 hours of average load in all, 3 h at rated power)
+  at seeded buses, aging cost 0.01 $/MWh of throughput;
+- the 19 generators with capacity scaled to 5000 MW in all, with a
+  quadratic cost term `c2 = c1/(3 Pmax)`;
+- load shedding allowed everywhere at 20763.594 $/MWh.
+
+In the case files generators 1-54 are the case generators, 55-81 the
+batteries' discharge (with `storage` rows 1-27), 82-200 the renewable units
+(zero cost, `Pmax` following the available power, so curtailment is
+`Pmax - Pg`) and 201-299 load shedding (`Pmax` following the bus demand).
+The series `tracy2021` holds the hourly `bus.Pd`, `bus.Qd` of the load
+buses and `gen.Pmax` of the renewable and shedding generators; the case
+values are those of the first hour. Values are written with 10 significant
+digits (within 5e-11 of the study's).
+
+ppedit's DC multistep OPF of these cases is the study's DC problem. In
+SOCP and AC it is close but not the same: cvxopf limits batteries and
+renewables to a circle `P^2 + Q^2 <= S^2` (here a box, and charging has no
+reactive power) and sheds reactive load with real load (here shedding has
+no reactive power). `build_tracy2021.cvxopf_inputs(case, formulation)`
+turns a case file back into the study's own cvxopf device model, exact in
+all four formulations:
+
+```python
+from cvxopf import build_opf_multistep, extract_results
+build = build_opf_multistep(**build_tracy2021.cvxopf_inputs(case, "lossy_dc"))
+build.solve(solver="CLARABEL")
+```
+
+### Checking the case files against the archive
+
+```sh
+python3 examples/ieee118/check_tracy2021.py /path/to/pes2027-reproduction-inputs.zip [--year] [--year-ppedit] [--studies]
+```
+
+checks that (1) the inputs made from the CSV equal those recorded in the
+two annual results; (2) the case files have the windows and battery
+energies of the joint study binding and the network, generators,
+renewables, batteries, demand and shedding of the study's frozen model
+inputs (`qualification_002/binding.json`); (3) each 24-hour window, solved
+with the battery energies at its ends fixed to the annual solution's, costs
+what the annual solution costs over it, with ppedit's multistep OPF and
+with the device model; (4) with `--year`, the same for the whole year in
+one-week windows, adding up to the annual objective (`--year-ppedit`: with
+ppedit, in one-day windows); (5) with `--studies`, ppedit and the device
+model give the same optimum for each 24-hour study as written, and the
+forced-shedding study sheds at least the study's minimum.
+
+Results on 2026-11-24 (Linux, Python 3.12, cvxopf 8c40598, CVXPY 1.9.3,
+CLARABEL 0.11.1; all checks passed):
+
+- inputs: the loads equal the recorded ones exactly, the renewable
+  availability within 1.4e-14 MW; the case files equal the frozen model
+  inputs within 4e-10 (relative);
+- annual copper plate: the year in one-week windows adds up to the
+  annual objective (101,159,780.379 $) within 0.005 $ (5e-11), every week's
+  generator outputs within 1e-3 MW;
+- annual lossy DC: within 132 $ (1.2e-6) of 109,472,954.967 $, every week
+  within 1 $ a day and generator outputs within 0.05 MW (see the note on
+  degeneracy in `check_tracy2021.py`: the window solutions meet the
+  study's constraints at a slightly lower cost than the annual solution);
+- the 24-hour studies as written: ppedit and the device model agree within
+  2e-9 (copper plate) and 0.41 $ (lossy DC); forced shedding sheds
+  551,625 MWh (copper plate) and 567,379 MWh (lossy DC), above the study's
+  minimum of 439,253 MWh;
+- ppedit's own multistep OPF over the year in one-day windows (a
+  diagnostic): copper plate solves 349 of 365 days within 8e-6 of the
+  annual solution (median 4e-11), lossy DC 354 of 365; the other days end
+  without a solution in CLARABEL, which solves cvxopf's device model of the
+  same days.
+
+The SOCP and AC studies are not checked: the archive holds no SOCP or AC
+results, and the 24-hour AC problems need more memory than the 7 GB this
+check was run with.
 
 ## Installing the inputs
 

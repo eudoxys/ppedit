@@ -26,6 +26,7 @@ the README badge. Coverage is informational: no minimum is enforced.
 | `test_server.py` | API guard (header, host), edits, undo/redo, rollback of bad edits, rows, solve/apply, upload, export, save |
 | `test_doctest.py` | examples in the `ppedit.case` docstring |
 | `test_examples.py` | every `examples/pypower/*.glm` holds the same data as its `.py`; `examples/pypower/case9_dcline.py`: its load series, PIPS OPF matches cvxopf's PYPOWER reference (`data/case9_dcline_pypower_reference.json`), and (skipped unless cvxopf is installed) the case data and `CVXOPF-AC` solution equal cvxopf's and multistep OPF over the series solves every step as the single-period case |
+| `test_ieee118.py` | `examples/ieee118/case118_tracy2021_*.py`: the files are what `build_tracy2021.py` writes, their generators, storage, shedding costs and series are as documented, and (skipped unless cvxopf is installed) the large-deficit day solves with copper-plate multistep OPF at the known cost |
 | `test_cvxopf.py` | `CVXOPF-*` OPF solvers: AC matches PIPS, all formulations solve case9, isolated buses, piecewise-linear and reactive costs, DC line direction (skipped unless cvxopf is installed) |
 | `test_solveproc.py` | `CVXOPF-*` solves in a child process: same result as in process, progress phases and IPOPT iterations, errors, stop (stand-in child), a child killed without a result, `/api/solve/progress` and `/api/solve/stop` (solver tests skipped unless cvxopf is installed) |
 | `test_cli.py` | `convert` and `check` commands and error exit codes |

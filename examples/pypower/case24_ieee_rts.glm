@@ -2015,7 +2015,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0,130,400.685";
+    costs "0,130,400.6849";
 }
 object pypower.gencost
 {
@@ -2024,7 +2024,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0,130,400.685";
+    costs "0,130,400.6849";
 }
 object pypower.gencost
 {
@@ -2033,7 +2033,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0.014142,16.0811,212.308";
+    costs "0.014142,16.0811,212.3076";
 }
 object pypower.gencost
 {
@@ -2042,7 +2042,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0.014142,16.0811,212.308";
+    costs "0.014142,16.0811,212.3076";
 }
 object pypower.gencost
 {
@@ -2051,7 +2051,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0,130,400.685";
+    costs "0,130,400.6849";
 }
 object pypower.gencost
 {
@@ -2060,7 +2060,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0,130,400.685";
+    costs "0,130,400.6849";
 }
 object pypower.gencost
 {
@@ -2069,7 +2069,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0.014142,16.0811,212.308";
+    costs "0.014142,16.0811,212.3076";
 }
 object pypower.gencost
 {
@@ -2078,7 +2078,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0.014142,16.0811,212.308";
+    costs "0.014142,16.0811,212.3076";
 }
 object pypower.gencost
 {
@@ -2114,7 +2114,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0.00717,48.5804,832.758";
+    costs "0.00717,48.5804,832.7575";
 }
 object pypower.gencost
 {
@@ -2123,7 +2123,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0.00717,48.5804,832.758";
+    costs "0.00717,48.5804,832.7575";
 }
 object pypower.gencost
 {
@@ -2132,7 +2132,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0.00717,48.5804,832.758";
+    costs "0.00717,48.5804,832.7575";
 }
 object pypower.gencost
 {
@@ -2195,7 +2195,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0.008342,12.3883,382.239";
+    costs "0.008342,12.3883,382.2391";
 }
 object pypower.gencost
 {
@@ -2204,7 +2204,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0.008342,12.3883,382.239";
+    costs "0.008342,12.3883,382.2391";
 }
 object pypower.gencost
 {
@@ -2213,7 +2213,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0.000213,4.4231,395.375";
+    costs "0.000213,4.4231,395.3749";
 }
 object pypower.gencost
 {
@@ -2222,7 +2222,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0.000213,4.4231,395.375";
+    costs "0.000213,4.4231,395.3749";
 }
 object pypower.gencost
 {
@@ -2285,7 +2285,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0.008342,12.3883,382.239";
+    costs "0.008342,12.3883,382.2391";
 }
 object pypower.gencost
 {
@@ -2294,7 +2294,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0.008342,12.3883,382.239";
+    costs "0.008342,12.3883,382.2391";
 }
 object pypower.gencost
 {
@@ -2303,7 +2303,7 @@ object pypower.gencost
     model POLYNOMIAL;
     startup 1500 $;
     shutdown 0 $;
-    costs "0.004895,11.8495,665.109";
+    costs "0.004895,11.8495,665.1094";
 }
 
-// 4 areas row(s) not written: module pypower has no area objects (bus area numbers are kept; reading this file rebuilds the rows with default price reference buses)
+// 4 areas row(s) not written: module pypower has no area objects (bus area numbers are kept; reading this file rebuilds the rows with default price reference buses and no names)
