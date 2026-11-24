@@ -1,8 +1,4 @@
-"""Check the Tracy 2021 study cases in `examples/ieee118/` (fast; solves skipped without cvxopf)
-
-The full check against the paper's reproduction archive is
-`examples/ieee118/check_tracy2021.py`, which needs the archive.
-"""
+"""Check the Tracy 2021 study cases in `examples/ieee118/` (fast; solves skipped without cvxopf)"""
 
 import importlib.util
 import os

@@ -1,9 +1,8 @@
-"""Build the Tracy 2021 IEEE 118-bus study cases (IEEE PES GM 2027)
+"""Build the Tracy 2021 IEEE 118-bus study cases
 
 Usage: python3 examples/ieee118/build_tracy2021.py [STUDY ...] [--output DIR]
 
-Writes one ppedit case file per study of the paper's Case118 experiments
-(see `README.md`), named `case118_tracy2021_<study>.py`, in this folder
+Writes one ppedit case file per study (see `README.md`), named `case118_tracy2021_<study>.py`, in this folder
 unless `--output` is given. With no STUDY, all the 24-hour studies of
 `STUDIES` are written; `annual` (the full year, about 40 MB) is written
 only when named.
@@ -17,17 +16,14 @@ and costs, so the columns where the two differ are taken from it (bus
 `rateB`, `rateC`, `ratio`, `angmin`, `angmax`; gencost `c2`, `c1`); every
 other value is checked to be the same in both.
 
-The study inputs are made as the cvxopf experiment code does
-(`experiments/case118_tracy_2021/prepare.py` at cvxopf 2edc6d3b, with the
-same seeded random siting): the 2021 hours of `9q9wtp_gen_and_load.csv`
-are scaled so the peak net load is 6000 MW, demand is shared among the 99
+The study inputs: the 2021 hours of `9q9wtp_gen_and_load.csv` are scaled so the peak net load is 6000 MW, demand is shared among the 99
 load buses in proportion to their case load, utility solar and wind go to
-15 seeded buses, distributed solar to the load buses, and 27 batteries
-(4 hours of average load in all, E/P = 3 h) to seeded buses. The 19
-generators with capacity are scaled to 5000 MW in all and get a quadratic
-cost term `c2 = c1/(3 Pmax)` (the study's `rho` = 1/3).
+15 buses picked at random (seed 42, `prepare`), distributed solar to the
+load buses, and 27 batteries (4 hours of average load in all, E/P = 3 h) to
+buses picked at random. The 19 generators with capacity are scaled to
+5000 MW in all and get a quadratic cost term `c2 = c1/(3 Pmax)`.
 
-cvxopf device models the study used are written as ppedit case data:
+The cvxopf device models of the studies are written as ppedit case data:
 
   - generator rows 1-54: the case generators (study limits and costs)
 
@@ -103,7 +99,7 @@ TITLES = {
     "surplus_to_deficit":"Surplus to deficit, 2021-12-27 12:00 to 2021-12-28 12:00, storage 50% to 50%",
     "deficit_to_surplus":"Deficit to surplus, 2021-04-12 15:00 to 2021-04-13 15:00, storage 50% to 50%",
     "forced_shedding":"Forced shedding: the large-deficit window with demand times 7.5416905141946184, storage 50% to 50%",
-    "annual":"Full year 2021 (Stage C annual DC study), storage 50% to 50%",
+    "annual":"Full year 2021, storage 50% to 50%",
 }
 
 def read_source(path:str=SOURCE) -> pd.DataFrame:
@@ -137,8 +133,8 @@ def read_pglib(path:str=PGLIB) -> dict:
     return out
 
 def prepare(source:pd.DataFrame,pglib:dict) -> dict:
-    """The study inputs, as cvxopf's `prepare()`: per-device hourly arrays
-    and device tables (see the module docstring)"""
+    """The study inputs: per-device hourly arrays and device tables (see the
+    module docstring)"""
     net = source.load - source.solar - source.wind - source.dist_solar
     scaled = source*(6000.0/float(net.max()))
     bus,gen,cost = pglib["bus"],pglib["gen"],pglib["gencost"]
@@ -151,7 +147,7 @@ def prepare(source:pd.DataFrame,pglib:dict) -> dict:
     has_gen = np.isin(ids,gen[active,0])
     categories = {"load_only":ids[has_load & ~has_gen],"load_generation":ids[has_load & has_gen],
         "generation_no_load":ids[~has_load & has_gen],"neither":ids[~has_load & ~has_gen]}
-    rng = np.random.Generator(np.random.PCG64(42))  # the study's seeded siting, call for call
+    rng = np.random.Generator(np.random.PCG64(42))  # seeded siting: keep the calls and their order
     selected = {k:np.sort(rng.choice(categories[k],5,replace=False)).tolist()
         for k in ("load_generation","generation_no_load","neither")}
     utility = sorted(v for group in selected.values() for v in group)
