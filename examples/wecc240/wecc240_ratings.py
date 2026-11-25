@@ -1,6 +1,7 @@
 """Set the branch ratings of the WECC 240 2020 case from its multistep SOCP OPF
 
-Syntax: python3 examples/wecc240/wecc240_ratings.py [CASE] [--flows CSV] [--margin M] [--check]
+Syntax: python3 examples/wecc240/wecc240_ratings.py [CASE] [--flows CSV] [--margin M]
+            [--floor CASE] [--check]
 
 Solves the multistep OPF of `CASE` (default `examples/wecc240/wecc240_2020.py`)
 over all the steps of its time series (the 744 hours of August 2020) with the
@@ -10,11 +11,15 @@ writes the largest apparent power flow of each branch over those hours to
 the branch row from 1, its larger end flow `max(|PF + jQF|, |PT + jQT|)` in
 MVA, and the step label of the hour it occurs). Then each in-service
 branch gets `rateA` = `maxflow_MVA * (1 + M)` (default `M` = 0.1, a 10%
-margin) rounded up to whole MVA, and its `rateB` and `rateC` raised to the
-new `rateA` where they are lower, and the case is saved in place. This lowers
-`rateA` on branches whose flows stay below their old rating, raises it on
-branches that reached it, and rates branches that were unrated (0) before.
-Out-of-service branches keep their ratings.
+margin) rounded up to whole MVA, but not less than its rating in the
+original WECC 240 case (`--floor`, default `examples/wecc240/wecc240_case.py`:
+its `rateA`, or where that is 0, as it is for every branch there, its first
+nonzero `rateB` or `rateC`, the rule of `build_wecc240_2018.py`; no floor
+where all three are 0). Its `rateB` and `rateC` are raised to the new `rateA`
+where they are lower, and the case is saved in place. This lowers `rateA`
+(down to the original rating) on branches whose flows stay below it, raises
+it on branches that reached it, and rates branches that were unrated (0)
+before. Out-of-service branches keep their ratings.
 
 `--flows CSV` reads the maximum flows from a file written earlier instead of
 solving (the solve takes about 8 minutes and more than 5 GB of memory);
@@ -36,6 +41,9 @@ FLOWS = "wecc240_2020_maxflow.csv"
 
 MARGIN = 0.1
 """Margin of `rateA` over the maximum flow (10%)"""
+
+FLOOR = "wecc240_case.py"
+"""Original WECC 240 case whose ratings are the lowest `rateA` allowed"""
 
 FIELDS = ["row","fbus","tbus","status","rateA_old","maxflow_MVA","hour"]
 
@@ -64,17 +72,24 @@ def max_flows(case:Case) -> list[dict]:
             "rateA_old":branch[5],"maxflow_MVA":round(best,3),"hour":hour})
     return rows
 
+def floor_ratings(branches:list) -> list[float]:
+    """Return the rating of each branch row: `rateA`, or the first nonzero
+    of `rateB` and `rateC` where it is 0 (0 when all are 0)"""
+    return [next((x for x in branch[5:8] if x != 0),0.0) for branch in branches]
+
 def read_flows(path:str) -> list[dict]:
     """Return the rows of a maximum flow file"""
     with open(path,newline="",encoding="utf-8") as fh:
         return list(csv.DictReader(fh))
 
-def main() -> int:
+def main() -> int: # pylint: disable=too-many-locals
     """Set the branch ratings of the case from its maximum multistep flows"""
     parser = argparse.ArgumentParser(description=__doc__.split("\n",1)[0])
     parser.add_argument("case",nargs="?",default=os.path.join(HERE,"wecc240_2020.py"))
     parser.add_argument("--flows",help="read the maximum flows from this file instead of solving")
     parser.add_argument("--margin",type=float,default=MARGIN,help="margin over the maximum flow")
+    parser.add_argument("--floor",default=os.path.join(HERE,FLOOR),
+        help="case whose branch ratings are the lowest rateA allowed")
     parser.add_argument("--check",action="store_true",help="report the changes without saving")
     args = parser.parse_args()
     case = Case.load(args.case)
@@ -89,8 +104,12 @@ def main() -> int:
     branches = case.tables["branch"]
     if len(flows) != len(branches):
         raise ValueError(f"{len(flows)} flows for {len(branches)} branches")
-    counts = {"raised":0,"lowered":0,"rated":0,"same":0,"out":0}
-    for n,(branch,flow) in enumerate(zip(branches,flows)):
+    original = Case.load(args.floor).tables["branch"]
+    if [b[:2] for b in original] != [b[:2] for b in branches]:
+        raise ValueError(f"the branches of {args.floor} are not those of the case")
+    floors = floor_ratings(original)
+    counts = {"raised":0,"lowered":0,"rated":0,"same":0,"out":0,"floor":0}
+    for n,(branch,flow,floor) in enumerate(zip(branches,flows,floors)):
         if (int(flow["fbus"]),int(flow["tbus"])) != (branch[0],branch[1]):
             raise ValueError(f"branch row {n+1} is {branch[0]}-{branch[1]}, "
                 f"not {flow['fbus']}-{flow['tbus']} as the flows say")
@@ -98,6 +117,9 @@ def main() -> int:
             counts["out"] += 1
             continue
         rate = float(math.ceil(float(flow["maxflow_MVA"])*(1+args.margin)))
+        if rate < floor:
+            rate = float(floor)
+            counts["floor"] += 1
         old = branch[5]
         counts["same" if rate == old else "rated" if old == 0 else
             "raised" if rate > old else "lowered"] += 1
@@ -109,7 +131,7 @@ def main() -> int:
         raise ValueError("; ".join(errors))
     print(f"rateA raised on {counts['raised']}, lowered on {counts['lowered']}, "
         f"set on {counts['rated']} unrated, unchanged on {counts['same']} branches; "
-        f"{counts['out']} out of service unchanged")
+        f"{counts['out']} out of service unchanged; {counts['floor']} held at the original rating")
     if not args.check:
         case.save(args.case)
         print(f"saved {args.case}")
