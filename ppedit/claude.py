@@ -37,9 +37,12 @@ including multistep OPF over the case time series (`multistep` and
     rows, filtered by column name or prefix;
 
   - `get_result`: the editor's last solution (`Editor.result`), whether
-    the page or the session ran it: its summary, result rows (with the
-    extended columns on request), the per-step summary, rows and storage
-    of a multistep solution, and the solver log;
+    the page or the session ran it: its summary (with the result columns
+    of each table), result rows (with the extended columns on request),
+    the solver log, and for a multistep OPF the horizon cost and window,
+    the per-step summary (as the Results tab's Steps block), the rows and
+    storage of any step, and any result column of chosen rows at every
+    step (`column`, `rows`);
 
   - `get_issues`: what the Issues tab lists: `Case.validate()` and the
     last solve's `messages` with their `detail`.
@@ -280,10 +283,16 @@ CASE_TOOLS = [
         "(extended=true adds prices and multipliers when the solver gives them); "
         "table steps: one summary row per step of a multistep solution; table storage: "
         "storage dispatch of a multistep step. step (counted from 0 in the solved "
-        "window) picks a multistep step (default 0). start/count page the rows. "
+        "window) picks a multistep step (default 0). For a multistep solution, "
+        "table with column (a result column such as Pg, Vm, loading_pct, Pd, E, or an "
+        "extended column such as lam_P; the summary lists them) gives that column "
+        "of every row, or of rows (0-based), at every step: the optimization "
+        "result over the horizon. start/count page the rows (the steps with column). "
         "log=true adds the end of the solver log (the step's report with step).",
         "input_schema":{"type":"object","properties":{"table":{"type":"string",
             "enum":_RESULT_TABLES},"step":{"type":"integer","minimum":0},
+            "column":{"type":"string"},
+            "rows":{"type":"array","items":{"type":"integer","minimum":0}},
             "start":{"type":"integer","minimum":0},"count":{"type":"integer","minimum":1},
             "extended":{"type":"boolean"},"log":{"type":"boolean"}}}},
     {"name":"get_issues","description":"Everything the editor's Issues tab lists: "
@@ -351,6 +360,9 @@ numbers in tools count from 0; the editor shows them counted from 1.
 - Results and issues: get_result reads the last solution, including one the \
 user ran in the editor and each step of a multistep solution; get_issues \
 reads what the Issues tab shows (case issues and the last solve's messages). \
+For a multistep OPF, get_result with table steps summarizes every step, and \
+with table and column gives one quantity (e.g. gen Pg, bus lam_P, branch \
+loading_pct, storage E) of the rows you choose across all steps. \
 Read them before explaining a result or an issue, and do not solve again \
 just to see a result that already exists.
 
@@ -425,6 +437,8 @@ def _result_summary(result) -> dict:
         for level in ("error","warning")}
     if result.get("multistep"):
         out["multistep"] = _multistep_info(result)
+    if result.get("success"):
+        out["columns"] = _result_columns((result.get("steps") or [result])[0])
     return out
 
 def _result_step(result,step):
@@ -442,12 +456,62 @@ def _result_step(result,step):
         raise CaseError(f"the multistep solution has steps 0 to {len(steps)-1}")
     return steps[step]
 
+def _result_columns(step) -> dict:
+    """Column names of each result table of one (step) result, extended
+    columns included"""
+    out = {}
+    for table in ("bus","gen","branch","dcline","areas","storage"):
+        rows = step.get(table) or []
+        if rows:
+            out[table] = list(rows[0]) + [c["name"] for c in RESULT_COLUMNS.get(table,[])
+                if (step.get("extended") or {}).get(table)]
+    return out
+
+def _value(step,table,column,n):
+    """Value of `column` in row `n` of `table` of one (step) result, from
+    the result rows or the extended columns"""
+    rows = step.get(table) or []
+    if n >= len(rows):
+        return None
+    if column in rows[n]:
+        return rows[n][column]
+    names = [c["name"] for c in RESULT_COLUMNS.get(table,[])]
+    ext = (step.get("extended") or {}).get(table)
+    if column in names and ext and n < len(ext):
+        return ext[n][names.index(column)]
+    raise CaseError(f"result table '{table}' has no column '{column}' (columns: "
+        + ", ".join(_result_columns(step).get(table,[])) + ")")
+
+def _trajectory(result,table,args) -> dict:
+    """`get_result` with `column`: one result column of the chosen rows at
+    every step of a multistep solution (one value per row and step)"""
+    steps = result.get("steps")
+    if not steps:
+        raise CaseError("column needs a multistep solution (read one step's rows with table)")
+    if table not in ("bus","gen","branch","dcline","areas","storage"):
+        raise CaseError("column needs table bus, gen, branch, dcline, areas or storage")
+    column = args["column"]
+    total = len(steps[0].get(table) or [])
+    rows = [int(n) for n in args.get("rows") or range(total)]
+    bad = [n for n in rows if not 0 <= n < total]
+    if bad:
+        raise CaseError(f"result table '{table}' has rows 0 to {total-1}, not {bad}")
+    start,picked = _page(list(range(len(steps))),args,_RESULT_ROWS)
+    values = [[_value(steps[t],table,column,n) for n in rows] for t in picked]
+    keys = {"bus":"bus_i","areas":"area"}.get(table)
+    return {"table":table,"column":column,"rows":rows,
+        **({keys:[(steps[0][table][n] or {}).get(keys) for n in rows]} if keys else {}),
+        "steps":len(steps),"start":start,
+        "values":[{"step":t,"label":steps[t].get("label"),"values":v} for t,v in zip(picked,values)]}
+
 def _result_tool(result,args) -> dict:
     """Result of the `get_result` tool"""
     if not result:
         return {"solution":None,"note":"no solution: the case has not been solved since the "
             "last edit (edits, undo and opening a case clear it)"}
     table,step = args.get("table"),args.get("step")
+    if args.get("column"):
+        return _trajectory(result,table,args)
     if table == "steps":
         if not result.get("steps"):
             raise CaseError("the last solution is not a multistep solution")
@@ -457,7 +521,9 @@ def _result_tool(result,args) -> dict:
                 "Pg_MW":sum(g.get("Pg") or 0 for g in s.get("gen") or []),
                 "Pd_MW":sum(a.get("Pd") or 0 for a in s.get("areas") or []),
                 **({"storage_MW":sum((x.get("Pdis") or 0) - (x.get("Pch") or 0)
-                    for x in s["storage"])} if s.get("storage") else {})}
+                        for x in s["storage"] if x.get("solved")),
+                    "stored_MWh":sum(x.get("E") or 0 for x in s["storage"] if x.get("solved"))}
+                    if any(x.get("solved") for x in s.get("storage") or []) else {})}
             for t,s in enumerate(result["steps"])]
         start,rows = _page(rows,args,_RESULT_ROWS)
         return {"table":"steps","total":len(result["steps"]),"start":start,"rows":rows}
