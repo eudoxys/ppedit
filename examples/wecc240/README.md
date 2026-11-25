@@ -50,10 +50,14 @@ flowchart LR
     ba[(wecc240_ba.csv<br>EIA-930 BA by bus)] --> areas[wecc240_areas.py]
     c2020[(wecc240_2020.py)] --> areas
     areas -->|in place| c2020
+    c2020 --> ratings[wecc240_ratings.py<br>multistep SOCP OPF, 10% margin]
+    ratings --> maxflow[(wecc240_2020_maxflow.csv)]
+    maxflow -->|--flows| ratings
+    ratings -->|rateA in place| c2020
 ```
 
 `wecc240_2018.py` and `wecc240_2020.py` (areas, area names and the geodata
-`BA` column) are rebuilt by their scripts, so edit the inputs and rerun the
+`BA` column, branch ratings) are rebuilt by their scripts, so edit the inputs and rerun the
 script rather than editing these case files. The `ppedit` steps are
 conversions done once with the editor; there is no script for them.
 
@@ -278,6 +282,35 @@ solve with the default settings; CLARABEL fails numerically (not
 `infeasible`) on hours 187 and 466 (2020-08-08 19:00 and 2020-08-20 10:00
 UTC), which solve with the `recommended` preparation or with the solver
 option `equilibrate_max_iter=50`.
+
+## Branch ratings of the 2020 case
+
+`wecc240_2020.py` branch `rateA` is set from its own August 2020 multistep
+SOCP OPF by
+
+    python3 examples/wecc240/wecc240_ratings.py [CASE] [--flows CSV] [--margin M] [--check]
+
+It solves the 744-hour multistep OPF with the SOCP relaxation (CLARABEL,
+default preparation and solver options; about 8 minutes and 5.5 GB of
+memory), writes each branch's largest end flow (`max(|PF + jQF|, |PT +
+jQT|)`, MVA) and its hour to `wecc240_2020_maxflow.csv`, and sets each
+in-service branch's `rateA` to that flow plus a 10% margin, rounded up to
+whole MVA, raising `rateB` and `rateC` to the new `rateA` where lower.
+`--flows wecc240_2020_maxflow.csv` reuses the saved flows instead of
+solving.
+
+Applied to the case with the ratings it had before (232 of the 447
+in-service branches rated, 215 at 0, unlimited), the solve ended successful with CLARABEL's warning that the
+solution may be inaccurate (horizon objective $516.6 million). The new
+ratings raised `rateA` on 51 branches, lowered it on 181 and rated the 215
+unrated ones; the 4 out-of-service branches keep theirs. The largest flows
+range from 43 MVA to 10,539 MVA. 44 rated branches were at their old
+rating in some hour, so their flows were limited by it: their new rating
+is 10% above the old one, not 10% above the flow they would carry without
+it. Every flow of that solution is at least 9% under its new rating
+(rounding up adds a little), so the solution stays feasible and the case
+still solves; rerunning the script on the new ratings gives other flows
+(the binding limits are looser), so it does not reproduce them.
 
 ## References
 
