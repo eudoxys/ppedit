@@ -321,6 +321,12 @@ API key to start sessions; tests use a fake client).
   `S.seriesTab`, `seriesOrder` by descending column sum, `seriesShown`,
   `S.seriesCols`, `SERIES_COLS` = 5 by default; `seriesPlot` with
   `seriesPlotEl` kept across renders, same Plotly bundle).
+  Multistep OPF window (decision #66, issue #157): `window` of
+  `Case.solve`/`/api/solve` (`[first, last]` combined steps from 0,
+  `Case.series_window`, `_series_input(window)` slices; step results use
+  `at_step(first + t)`); `renderSeriesWindow`, `seriesWindow()`,
+  `S.seriesWindow` (reset when the combined steps or end labels change) in
+  `app.js`; `solveRequest` sends `window` only when narrowed.
   Step controls and Copy to case (`renderSeriesStep`, `S.seriesStep`,
   `stepTimes`, `POST /api/series/apply`, `Case.apply_step`) work on
   combined steps; `seriesStepRow` maps the step to the shown series' row.

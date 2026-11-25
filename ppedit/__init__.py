@@ -112,6 +112,10 @@ Given a case file, `ppedit.Case` is expected to satisfy:
      combines them (`Case.combined_series`): by time when every series has
      a time column (the times common to all), else step by step (same
      number of steps); a value given by several series is their sum.
+     The solve may cover only a window of the combined steps (`window` of
+     `Case.solve`, `Case.series_window`; the *Multistep OPF window* start
+     and stop on the Multistep tab, limited to the series range; issue
+     #157).
      Multistep builder options (`multistep` of the cvxopf solve options,
      `ppedit._cvxopf.MULTISTEP_OPTIONS`) choose the temporal assembly and
      cvxopf `OPFOptions` such as branch limits and the lossy DC loss weight.

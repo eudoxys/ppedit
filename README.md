@@ -269,7 +269,16 @@ In the editor:
     and the tab says why when they cannot be combined. The
     multistep builder options (temporal assembly, branch limits, loss
     weight and others, each for the network models it applies to) are on
-    the Settings tab under *CVXOPF multistep options*. To put the values
+    the Settings tab under *CVXOPF multistep options*. The **Multistep OPF
+    window** row under the toolbar chooses the steps a multistep OPF
+    solves: **Start** and **Stop** date and time inputs (step numbers when
+    the steps have no time labels) that start at the first and last step
+    of the combined series and cannot go outside it (a time typed outside
+    is moved to the series' first or last step; a start between steps
+    moves to the next step and a stop to the previous one; a start after
+    the stop moves the stop with it, and the reverse), and **Full range**
+    to solve all steps again. The window is kept while the combined series
+    keeps its steps; storage starts the window with its `Es`. To put the values
     of one step into the case, check **Step** in the row under the
     toolbar, choose the step with its date and time (or its number when
     the steps have no time labels) or the arrows (first, 24 back, 1 back,

@@ -2026,20 +2026,60 @@ def {name}():
                 changed += 1
         return changed
 
-    def _series_input(self) -> dict:
-        """Per-step case values for `ppedit._cvxopf.runopf` (`series` argument);
-        `CaseError` when a step has `Pmin > Pmax`"""
+    def series_window(self,window:list|tuple|None=None) -> tuple[int,int]:
+        """Return the combined series steps `(first, last)` (counted from 0,
+        both included) that a multistep OPF solves: `window`, a pair of step
+        numbers counted from 0, or all steps when `window` is `None`
+        (issue #157)
+
+        >>> case = Case.builtin("case9")
+        >>> _ = case.set_series(["bus.Pd.5"],[[80],[90],[100],[110]])
+        >>> case.series_window(), case.series_window([1,2])
+        ((0, 3), (1, 2))
+
+        Exceptions
+        ----------
+
+          - `CaseError`: no series, `window` not two whole numbers, or a
+            window outside the series or ending before it starts
+        """
         ser = self.combined_series()
-        out = {"T":len(ser["values"]),"delta":ser["delta"],"index":list(ser["index"])}
+        if not ser:
+            raise CaseError("the case has no time series")
+        steps = len(ser["values"])
+        if window is None:
+            return 0,steps - 1
+        try:
+            first,last = window
+            if any(isinstance(x,bool) or float(x) != int(x) for x in (first,last)):
+                raise ValueError
+            first,last = int(first),int(last)
+        except (TypeError,ValueError) as err:
+            raise CaseError("the multistep window must be two step numbers [first, last]") from err
+        if not 0 <= first <= last < steps:
+            raise CaseError(f"the multistep window (steps {first+1} to {last+1}) must lie within "
+                f"the {steps} series step(s) and not end before it starts")
+        return first,last
+
+    def _series_input(self,window:list|tuple|None=None) -> dict:
+        """Per-step case values for `ppedit._cvxopf.runopf` (`series` argument)
+        over the steps of `series_window(window)`; `first` is the first step
+        of the window in the combined series; `CaseError` when a step has
+        `Pmin > Pmax`"""
+        ser = self.combined_series()
+        first,last = self.series_window(window)
+        index = list(ser["index"][first:last+1])
+        out = {"T":len(index),"delta":ser["delta"],"index":index,"first":first,
+            "steps":len(ser["values"])}
         for table,column in (("bus","Pd"),("bus","Qd"),("gen","Pmin"),("gen","Pmax"),
                 ("dcline","Pmin"),("dcline","Pmax")):
             key = column if table == "bus" else f"{table}_{column}"
-            out[key] = self.series_values(table,column)
+            out[key] = self.series_values(table,column)[first:last+1]
         for table in ("gen","dcline"):
             for n in range(len(self.tables[table])):
                 for t,(lo,hi) in enumerate(zip(out[f"{table}_Pmin"],out[f"{table}_Pmax"])):
                     if lo[n] > hi[n]:
-                        raise CaseError(f"series step {t+1} ({ser['index'][t]}): "
+                        raise CaseError(f"series step {first+t+1} ({index[t]}): "
                             f"{table} {n+1} has Pmin {lo[n]:g} > Pmax {hi[n]:g}")
         out["gen_limited"] = sorted({int(x.split(".")[2]) - 1 for x in ser["columns"]
             if x.startswith("gen.")})
@@ -2262,7 +2302,7 @@ def {name}():
         return issues
 
     def solve(self,kind:str="pf",algorithm:str|None=None,options:dict|None=None,
-            multistep:bool=False,job=None) -> dict:
+            multistep:bool=False,job=None,window:list|tuple|None=None) -> dict:
         """Run a PYPOWER power flow (`pf`) or optimal power flow (`opf`)
 
         Arguments
@@ -2288,6 +2328,11 @@ def {name}():
           - `multistep`: solve the time series (`Case.series`) as one
             multistep OPF (issue #124); needs `opf`, a `CVXOPF-*` solver and
             a series (see below)
+
+          - `window`: the steps a multistep OPF solves, `[first, last]`
+            (counted from 0, both included) of `combined_series`; all steps
+            when `None` (see `series_window`; issue #157). Ignored without
+            `multistep`. Storage starts the window with its `Es`.
 
           - `job`: `None`, or a `ppedit._solveproc.SolveJob`: a `CVXOPF-*`
             solve then runs in a child process that reports its progress
@@ -2339,7 +2384,9 @@ def {name}():
         A multistep OPF builds every step of the series in one cvxopf
         problem (`build_opf_multistep`, steps `delta` hours long) and
         returns the first step in the layout above, plus `multistep`
-        (`steps`, `delta`, `index`: the step labels), `horizon_objective`
+        (`steps`, `delta`, `index`: the step labels, `series`: the series
+        names, `window`: `[first, last]` of the steps solved in the combined
+        series, and `total`: its number of steps), `horizon_objective`
         (cvxopf's objective over the horizon, $: each step's cost rate
         times `delta`) and `steps`: one result per step with `label`,
         `success`, `objective` (that step's generator and DC line cost,
@@ -2396,7 +2443,8 @@ def {name}():
           - `CaseError`: the case has validation errors, OPF without costs,
             an unknown algorithm, a solver whose module is not installed,
             invalid cvxopf `options`, or a multistep OPF with another solver,
-            without a series, with a step where `Pmin > Pmax`, or with
+            without a series, with a `window` outside the series, with a
+            step where `Pmin > Pmax`, or with
             generator limits in the series and the `recommended` preparation
         """
         errors = [x for x in self.validate() if x["level"] == "error"]
@@ -2425,7 +2473,7 @@ def {name}():
                 raise CaseError("multistep OPF needs a CVXOPF-* solver")
             if not self.series:
                 raise CaseError("multistep OPF needs a time series (import one on the Multistep tab)")
-            series = self._series_input()
+            series = self._series_input(window)
         cvx_options = None
         if cvx:
             from ppedit._cvxopf import solve_options # pylint: disable=import-outside-toplevel
@@ -2457,7 +2505,8 @@ def {name}():
         info = {"kind":kind,"algorithm":algorithm,"solver":algs[algorithm][0],"dc":dc,
             "options":cvx_options,"multistep":None if series is None else
                 {"steps":series["T"],"delta":series["delta"],"index":series["index"],
-                 "series":[x["name"] for x in self.series]}}
+                 "series":[x["name"] for x in self.series],
+                 "window":[series["first"],series["first"]+series["T"]-1],"total":series["steps"]}}
         log = io.StringIO()
         messages = []
         def message(level,text,detail=None):
@@ -2540,7 +2589,7 @@ def {name}():
             label = series["index"][t]
             slog = io.StringIO()
             slog.write(f"Step {t+1} of {len(res['steps'])} ({label})\n")
-            out = self.at_step(t)._solution(step,kind,cvx,info,opt,slog,dead) # pylint: disable=protected-access
+            out = self.at_step(series["first"]+t)._solution(step,kind,cvx,info,opt,slog,dead) # pylint: disable=protected-access
             out["label"] = label
             out["storage"] = step.get("storage",[])
             steps.append({k:out[k] for k in ("label","success","objective","losses_MW",
