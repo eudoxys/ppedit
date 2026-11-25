@@ -4,6 +4,7 @@ A fake API client replays scripted responses, so no API key is needed.
 """
 
 import copy
+import importlib.util
 
 import pytest
 
@@ -168,3 +169,145 @@ def test_api_key_file_errors_and_unknown_agent(tmp_path):
     assert status == 400 and "is empty" in st["error"]
     status,st = post("/api/claude/new",{"agent":"other"})
     assert status == 400 and "unknown agent" in st["error"]
+
+HAS_CVXOPF = importlib.util.find_spec("cvxopf") is not None
+
+def _session(case=None):
+    app = create_app(case or Case.builtin("case9"),claude_client=_client(_text("ok")))
+    app.config["TESTING"] = True
+    app.config["CLAUDE"].create()
+    return app,app.config["EDITOR"],app.config["CLAUDE"].get(1)
+
+def _multistep_case():
+    case = Case.builtin("case9")
+    case.set_series(["bus.Pd.5","bus.Pd.7","gen.Pmax.1"],[[80,90,250],[100,110,200],[120,130,150]],
+        ["00:00","01:00","02:00"],name="loads")
+    return case
+
+def test_get_series():
+    _,_,session = _session(_multistep_case())
+    out = session.run_tool("get_series",{})[0]
+    assert out["series"] == [{"name":"loads","columns":3,"steps":3,"delta_h":1.0,"timed":True,
+        "first":"00:00","last":"02:00"}]
+    assert out["combined"]["steps"] == 3 and "index" not in out["combined"]
+    out = session.run_tool("get_series",{"name":"loads","start":1,"count":1,"columns":["bus.pd"]})[0]
+    assert out["columns"] == 3 and out["columns_shown"] == 2
+    assert out["rows"] == [{"step":1,"label":"01:00","values":{"bus.Pd.5":100,"bus.Pd.7":110}}]
+    out = session.run_tool("get_series",{"name":"combined","columns":["gen.Pmax.1"]})[0]
+    assert [r["values"] for r in out["rows"]] == [{"gen.Pmax.1":250},{"gen.Pmax.1":200},{"gen.Pmax.1":150}]
+    with pytest.raises(ValueError,match="no series 'x'"):
+        session.run_tool("get_series",{"name":"x"})
+    _,_,session = _session()
+    assert session.run_tool("get_series",{})[0]["note"] == "the case has no time series"
+    assert session.run_tool("get_case",{})[0]["combined_series"] is None
+
+def test_get_result_and_issues_after_page_solve():
+    app,editor,session = _session()
+    assert session.run_tool("get_result",{})[0]["solution"] is None
+    assert session.run_tool("get_issues",{})[0]["last_solve"] is None
+    test = app.test_client()
+    res = test.post("/api/solve",json={"kind":"opf","algorithm":"PIPS"},headers={"X-PPEdit":"1"})
+    assert res.status_code == 200
+    out = session.run_tool("get_result",{})[0]
+    assert out["success"] and out["kind"] == "opf" and out["rows"]["gen"] == 3
+    assert "multistep" not in out
+    assert session.run_tool("get_case",{})[0]["solution"]["algorithm"] == "PIPS"
+    out = session.run_tool("get_result",{"table":"gen","start":1,"count":1,"extended":True,"log":True})[0]
+    assert out["total"] == 3 and out["rows"][0]["row"] == 1 and "mu_Pmax" in out["rows"][0]
+    assert out["log"]
+    assert "mu_Pmax" not in session.run_tool("get_result",{"table":"gen"})[0]["rows"][0]
+    with pytest.raises(ValueError,match="not a multistep"):
+        session.run_tool("get_result",{"table":"steps"})
+    with pytest.raises(ValueError,match="not a multistep"):
+        session.run_tool("get_result",{"table":"bus","step":2})
+    # solver messages reach get_issues as the Issues tab shows them
+    warning = {"level":"warning","message":"bus 5 isolated","detail":{"explain":"no branch"}}
+    editor.result["messages"] = [warning]
+    out = session.run_tool("get_issues",{})[0]
+    assert out["case"] == editor.case.validate() and out["last_solve"]["messages"] == [warning]
+    # an edit clears the result
+    session.run_tool("set_cell",{"table":"bus","row":4,"column":"Pd","value":95})
+    assert session.run_tool("get_result",{})[0]["solution"] is None
+
+def _fake_multistep(editor):
+    """A multistep result in the layout of `Case.solve` (cvxopf may not be installed)"""
+    base = editor.case.solve("opf","DC-PIPS")
+    steps = []
+    for t,label in enumerate(["00:00","01:00"]):
+        step = copy.deepcopy(base)
+        step |= {"label":label,"objective":1000.0 + t,"log":f"step {t} report",
+            "storage":[{"row":0,"solved":True,"Pdis":5.0,"Pch":1.0,"E":10.0,"cost":0.1}]}
+        steps.append(step)
+    editor.result = base | {"multistep":{"steps":2,"delta":1.0,"index":["00:00","01:00"],
+        "series":["loads"],"window":[3,4],"total":10},"horizon_objective":2001.0,"steps":steps}
+
+def test_get_result_multistep():
+    _,editor,session = _session()
+    _fake_multistep(editor)
+    out = session.run_tool("get_result",{})[0]
+    assert out["multistep"] == {"steps":2,"delta":1.0,"series":["loads"],"window":[3,4],"total":10,
+        "first_label":"00:00","last_label":"01:00","horizon_objective":2001.0,"steps_solved":2}
+    assert out["step"]["step"] == 0 and out["step"]["label"] == "00:00"
+    rows = session.run_tool("get_result",{"table":"steps"})[0]["rows"]
+    assert [(r["step"],r["label"],r["objective"],r["storage_MW"]) for r in rows] \
+        == [(0,"00:00",1000.0,4.0),(1,"01:00",1001.0,4.0)]
+    assert rows[0]["Pd_MW"] == pytest.approx(315)
+    out = session.run_tool("get_result",{"table":"storage","step":1,"log":True})[0]
+    assert out["label"] == "01:00" and out["rows"][0]["Pdis"] == 5.0 and out["log"] == "step 1 report"
+    with pytest.raises(ValueError,match="steps 0 to 1"):
+        session.run_tool("get_result",{"table":"bus","step":2})
+    assert rows[0]["stored_MWh"] == 10.0
+    # one result column of chosen rows over the horizon
+    editor.result["steps"][1]["gen"][0]["Pg"] = 123.0
+    out = session.run_tool("get_result",{"table":"gen","column":"Pg","rows":[0,2]})[0]
+    assert out["rows"] == [0,2] and out["steps"] == 2
+    assert [v["label"] for v in out["values"]] == ["00:00","01:00"]
+    assert out["values"][1]["values"][0] == 123.0
+    assert out["values"][0]["values"][1] == editor.result["steps"][0]["gen"][2]["Pg"]
+    out = session.run_tool("get_result",{"table":"bus","column":"lam_P","start":1})[0]
+    assert out["bus_i"] == [r[0] for r in editor.case.tables["bus"]] and out["start"] == 1
+    assert len(out["values"]) == 1 and len(out["values"][0]["values"]) == 9
+    assert out["values"][0]["values"][0] > 0
+    out = session.run_tool("get_result",{"table":"storage","column":"E"})[0]
+    assert [v["values"] for v in out["values"]] == [[10.0],[10.0]]
+    assert "lam_P" in session.run_tool("get_result",{})[0]["columns"]["bus"]
+    with pytest.raises(ValueError,match="no column 'x'"):
+        session.run_tool("get_result",{"table":"gen","column":"x"})
+    with pytest.raises(ValueError,match="rows 0 to 2"):
+        session.run_tool("get_result",{"table":"gen","column":"Pg","rows":[3]})
+    # apply_result copies the chosen step
+    _,changed = session.run_tool("apply_result",{"step":1})
+    assert changed and editor.case.tables["gen"][0][1] == 123.0
+
+def test_column_needs_multistep():
+    _,editor,session = _session()
+    editor.result = editor.case.solve("pf")
+    with pytest.raises(ValueError,match="multistep"):
+        session.run_tool("get_result",{"table":"gen","column":"Pg"})
+
+def test_solve_waits_for_page_solve():
+    _,editor,session = _session()
+    class Running: # pylint: disable=too-few-public-methods
+        done = False
+    editor.job = Running()
+    with pytest.raises(ValueError,match="still running"):
+        session.run_tool("solve",{"kind":"pf"})
+    editor.job.done = True
+    assert session.run_tool("solve",{"kind":"pf"})[0]["success"]
+
+def test_solve_multistep_needs_cvxopf_solver():
+    _,_,session = _session(_multistep_case())
+    with pytest.raises(ValueError,match="CVXOPF"):
+        session.run_tool("solve",{"kind":"opf","algorithm":"PIPS","multistep":True})
+
+@pytest.mark.skipif(not HAS_CVXOPF,reason="cvxopf is not installed")
+def test_solve_multistep_window():
+    _,_,session = _session(_multistep_case())
+    out = session.run_tool("solve",{"kind":"opf","algorithm":"CVXOPF-DC","multistep":True,"window":[1,2]})[0]
+    assert out["success"] and out["multistep"]["window"] == [1,2] and out["multistep"]["steps"] == 2
+    assert out["multistep"]["first_label"] == "01:00" and "index" not in out["multistep"]
+    rows = session.run_tool("get_result",{"table":"steps"})[0]["rows"]
+    assert [r["label"] for r in rows] == ["01:00","02:00"] and all(r["success"] for r in rows)
+    assert rows[1]["Pd_MW"] == pytest.approx(120 + 130 + 125)
+    out = session.run_tool("get_result",{"table":"gen","column":"Pg"})[0]
+    assert [sum(v["values"]) for v in out["values"]] == pytest.approx([r["Pg_MW"] for r in rows])

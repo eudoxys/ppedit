@@ -27,7 +27,29 @@ Configuration
 Data sources
 ------------
 
-Every session can read and edit the case, validate it and run PF/OPF.
+Every session can read and edit the case, validate it and run PF/OPF,
+including multistep OPF over the case time series (`multistep` and
+`window` of the `solve` tool, as in `/api/solve`). It can also read
+(issue #162):
+
+  - `get_series`: the time series of the case (`Case.series`) and their
+    combined horizon (`Case.combined_series`), as summaries or as step
+    rows, filtered by column name or prefix;
+
+  - `get_result`: the editor's last solution (`Editor.result`), whether
+    the page or the session ran it: its summary (with the result columns
+    of each table), result rows (with the extended columns on request),
+    the solver log, and for a multistep OPF the horizon cost and window,
+    the per-step summary (as the Results tab's Steps block), the rows and
+    storage of any step, and any result column of chosen rows at every
+    step (`column`, `rows`);
+
+  - `get_issues`: what the Issues tab lists: `Case.validate()` and the
+    last solve's `messages` with their `detail`.
+
+The `solve` tool refuses to run while a solve started from the page is
+still running (decision #63).
+
 Two optional data sources are chosen when a session is created:
 
   - `web`: Anthropic's server-side web search tool and a `fetch_url` tool
@@ -61,7 +83,7 @@ import time
 import urllib.error
 import urllib.request
 
-from ppedit.case import COLUMNS, TABLES, PF_SOLVERS, OPF_SOLVERS, CaseError
+from ppedit.case import COLUMNS, TABLES, RESULT_COLUMNS, PF_SOLVERS, OPF_SOLVERS, CaseError
 
 API_URL = "https://api.anthropic.com/v1/messages"
 """Anthropic Messages API endpoint"""
@@ -168,6 +190,14 @@ def http_client(payload:dict,key:str|None=None) -> dict:
 
 _TABLE = {"type":"string","enum":TABLES}
 
+_SERIES_ROWS = 24
+"""Steps `get_series` returns when `count` is not given"""
+
+_RESULT_ROWS = 200
+"""Rows `get_result` returns when `count` is not given"""
+
+_RESULT_TABLES = ["bus","gen","branch","dcline","areas","steps","storage"]
+
 CASE_TOOLS = [
     {"name":"get_case","description":"Summary of the open case: name, baseMVA, "
         "version, row count of each table, geodata row count, and load notes.",
@@ -217,15 +247,58 @@ CASE_TOOLS = [
         "preparation default|recommended, solver (CVXPY solver for the convex models), verbose, "
         "solver_options {name: value}). Returns a summary with messages (solver errors and "
         "warnings; a warning's detail gives its physical meaning and the constraints and case rows "
-        "involved); the full result is shown in the editor's Results tab.",
+        "involved); the full result is shown in the editor's Results tab and read with "
+        "get_result. multistep=true solves the combined time series (get_series) as one "
+        "multistep OPF (opf with a CVXOPF-* solver only), over the combined steps "
+        "window [first, last] (counted from 0, both included; default all).",
         "input_schema":{"type":"object","properties":{"kind":{"type":"string","enum":["pf","opf"]},
             "algorithm":{"type":"string","enum":[*PF_SOLVERS,*OPF_SOLVERS]},
+            "multistep":{"type":"boolean"},
+            "window":{"type":"array","items":{"type":"integer","minimum":0},
+                "minItems":2,"maxItems":2},
             "options":{"type":"object","properties":{
                 "preparation":{"type":"string","enum":["default","recommended"]},
                 "solver":{"type":"string"},"verbose":{"type":"boolean"},
                 "solver_options":{"type":"object"}}}}}},
     {"name":"apply_result","description":"Copy the last solution (voltages, "
-        "generator outputs) into the case.",
+        "generator outputs) into the case; for a multistep solution, the step "
+        "given by step (counted from 0 in the solved window, default 0).",
+        "input_schema":{"type":"object","properties":{"step":{"type":"integer","minimum":0}}}},
+    {"name":"get_series","description":"Time series of case values used by multistep "
+        "OPF. Without name: the summary of every series (columns, steps, hours per step, "
+        "first and last labels) and of the combined series the multistep OPF solves "
+        "(or why the series cannot be combined). With name (a series name, or "
+        "\"combined\"): its step rows {step (0-based), label, values {column: value}} "
+        "from start, count steps (default "+str(_SERIES_ROWS)+"). Columns are "
+        "table.column.key: bus.Pd.<bus_i>, bus.Qd.<bus_i>, gen.Pmin.<gen row from 1>, "
+        "gen.Pmax.<n>, dcline.Pmin.<n>, dcline.Pmax.<n>; columns limits them to the "
+        "names or prefixes given (e.g. [\"bus.Pd\", \"gen.Pmax.3\"]).",
+        "input_schema":{"type":"object","properties":{"name":{"type":"string"},
+            "start":{"type":"integer","minimum":0},"count":{"type":"integer","minimum":1},
+            "columns":{"type":"array","items":{"type":"string"}}}}},
+    {"name":"get_result","description":"The last solution in the editor, whether the "
+        "user (Results tab) or this session ran it; edits clear it. Without table: its "
+        "summary (success, solver, objective, losses, row counts, multistep horizon "
+        "and window, message count). table bus|gen|branch|dcline|areas: result rows "
+        "(extended=true adds prices and multipliers when the solver gives them); "
+        "table steps: one summary row per step of a multistep solution; table storage: "
+        "storage dispatch of a multistep step. step (counted from 0 in the solved "
+        "window) picks a multistep step (default 0). For a multistep solution, "
+        "table with column (a result column such as Pg, Vm, loading_pct, Pd, E, or an "
+        "extended column such as lam_P; the summary lists them) gives that column "
+        "of every row, or of rows (0-based), at every step: the optimization "
+        "result over the horizon. start/count page the rows (the steps with column). "
+        "log=true adds the end of the solver log (the step's report with step).",
+        "input_schema":{"type":"object","properties":{"table":{"type":"string",
+            "enum":_RESULT_TABLES},"step":{"type":"integer","minimum":0},
+            "column":{"type":"string"},
+            "rows":{"type":"array","items":{"type":"integer","minimum":0}},
+            "start":{"type":"integer","minimum":0},"count":{"type":"integer","minimum":1},
+            "extended":{"type":"boolean"},"log":{"type":"boolean"}}}},
+    {"name":"get_issues","description":"Everything the editor's Issues tab lists: "
+        "case issues (the same as validate) and the errors and warnings of the last "
+        "solve, each warning with its detail when known (physical meaning, constraints "
+        "and case rows involved).",
         "input_schema":{"type":"object","properties":{}}},
     {"name":"load_geodata","description":"Replace the case geodata (bus "
         "locations) from CSV with columns BUS_I, LAT, LON (others kept as "
@@ -281,6 +354,17 @@ row indexes) and charge at bus bus_i, or through that generator when bus_i is \
 leaves the final energy free).
 - Infinite limits are the strings "Inf" and "-Inf".
 - Enum columns accept the code or the keyword shown in braces.
+- Multistep data: get_series reads the time series of loads and limits; the \
+multistep OPF solves their combined series (solve with multistep=true). Step \
+numbers in tools count from 0; the editor shows them counted from 1.
+- Results and issues: get_result reads the last solution, including one the \
+user ran in the editor and each step of a multistep solution; get_issues \
+reads what the Issues tab shows (case issues and the last solve's messages). \
+For a multistep OPF, get_result with table steps summarizes every step, and \
+with table and column gives one quantity (e.g. gen Pg, bus lam_P, branch \
+loading_pct, storage E) of the rows you choose across all steps. \
+Read them before explaining a result or an issue, and do not solve again \
+just to see a result that already exists.
 
 Work carefully: read the tables you need before editing, prefer one \
 set_cells or add_rows call for related changes, validate after editing, and \
@@ -299,6 +383,175 @@ def _system(web,local,root):
 
 def _row_dict(table,row):
     return {c["name"]:v for c,v in zip(COLUMNS[table],row)}
+
+def _page(rows,args,default):
+    """Rows `start` to `start + count` (`count` default `default`) as
+    `(start, rows)`"""
+    start = int(args.get("start") or 0)
+    count = int(args.get("count") or default)
+    return start,rows[start:start+count]
+
+def _series_tool(case,args) -> dict:
+    """Result of the `get_series` tool"""
+    name = args.get("name")
+    if not name:
+        combined = case._combined_info() # pylint: disable=protected-access
+        return {"series":[{"name":s["name"],"columns":len(s["columns"]),"steps":len(s["values"]),
+                "delta_h":s["delta"],"timed":s["timed"],
+                "first":s["index"][0] if s["index"] else None,
+                "last":s["index"][-1] if s["index"] else None} for s in case.series],
+            "combined":{k:v for k,v in combined.items() if k != "index"} if combined else None,
+            **({} if case.series else {"note":"the case has no time series"})}
+    ser = case.get_series(name)
+    if ser is None and name == "combined":
+        ser = case.combined_series()
+    if ser is None:
+        raise CaseError(f"no series '{name}' (series: "
+            + (", ".join(s["name"] for s in case.series) or "none") + "; or 'combined')")
+    prefixes = [str(p).strip().lower() for p in args.get("columns") or [] if str(p).strip()]
+    keep = [j for j,c in enumerate(ser["columns"]) if not prefixes
+        or any(c.lower() == p or c.lower().startswith(p + ".") for p in prefixes)]
+    start,steps = _page(list(range(len(ser["values"]))),args,_SERIES_ROWS)
+    return {"name":name,"steps":len(ser["values"]),"delta_h":ser["delta"],"timed":ser["timed"],
+        "columns":len(ser["columns"]),"columns_shown":len(keep),"start":start,
+        "rows":[{"step":t,"label":ser["index"][t],
+            "values":{ser["columns"][j]:ser["values"][t][j] for j in keep}} for t in steps]}
+
+def _multistep_info(result) -> dict:
+    """Multistep horizon of a result, without the full list of step labels"""
+    info = result.get("multistep") or {}
+    index = info.get("index") or []
+    steps = result.get("steps") or []
+    return {**{k:v for k,v in info.items() if k != "index"},
+        "first_label":index[0] if index else None,"last_label":index[-1] if index else None,
+        "horizon_objective":result.get("horizon_objective"),
+        "steps_solved":sum(1 for s in steps if s.get("success"))}
+
+def _result_summary(result) -> dict:
+    """Summary of a solver result"""
+    messages = result.get("messages") or []
+    out = {k:result.get(k) for k in ("success","kind","algorithm","solver","dc","stopped",
+        "iterations","objective","losses_MW","dcline_losses_MW","options")}
+    out["rows"] = {t:len(result.get(t) or []) for t in ("bus","gen","branch","dcline","areas")}
+    out["messages"] = {level:sum(1 for m in messages if m.get("level") == level)
+        for level in ("error","warning")}
+    if result.get("multistep"):
+        out["multistep"] = _multistep_info(result)
+    if result.get("success"):
+        out["columns"] = _result_columns((result.get("steps") or [result])[0])
+    return out
+
+def _result_step(result,step):
+    """The result of multistep step `step` (counted from 0), or the result
+    itself when it is not multistep and `step` is 0 or `None`"""
+    if not result:
+        raise CaseError("no solution: the case has not been solved since the last edit")
+    steps = result.get("steps")
+    if not steps:
+        if step not in (None,0):
+            raise CaseError("the last solution is not a multistep solution")
+        return result
+    step = int(step or 0)
+    if not 0 <= step < len(steps):
+        raise CaseError(f"the multistep solution has steps 0 to {len(steps)-1}")
+    return steps[step]
+
+def _result_columns(step) -> dict:
+    """Column names of each result table of one (step) result, extended
+    columns included"""
+    out = {}
+    for table in ("bus","gen","branch","dcline","areas","storage"):
+        rows = step.get(table) or []
+        if rows:
+            out[table] = list(rows[0]) + [c["name"] for c in RESULT_COLUMNS.get(table,[])
+                if (step.get("extended") or {}).get(table)]
+    return out
+
+def _value(step,table,column,n):
+    """Value of `column` in row `n` of `table` of one (step) result, from
+    the result rows or the extended columns"""
+    rows = step.get(table) or []
+    if n >= len(rows):
+        return None
+    if column in rows[n]:
+        return rows[n][column]
+    names = [c["name"] for c in RESULT_COLUMNS.get(table,[])]
+    ext = (step.get("extended") or {}).get(table)
+    if column in names and ext and n < len(ext):
+        return ext[n][names.index(column)]
+    raise CaseError(f"result table '{table}' has no column '{column}' (columns: "
+        + ", ".join(_result_columns(step).get(table,[])) + ")")
+
+def _trajectory(result,table,args) -> dict:
+    """`get_result` with `column`: one result column of the chosen rows at
+    every step of a multistep solution (one value per row and step)"""
+    steps = result.get("steps")
+    if not steps:
+        raise CaseError("column needs a multistep solution (read one step's rows with table)")
+    if table not in ("bus","gen","branch","dcline","areas","storage"):
+        raise CaseError("column needs table bus, gen, branch, dcline, areas or storage")
+    column = args["column"]
+    total = len(steps[0].get(table) or [])
+    rows = [int(n) for n in args.get("rows") or range(total)]
+    bad = [n for n in rows if not 0 <= n < total]
+    if bad:
+        raise CaseError(f"result table '{table}' has rows 0 to {total-1}, not {bad}")
+    start,picked = _page(list(range(len(steps))),args,_RESULT_ROWS)
+    values = [[_value(steps[t],table,column,n) for n in rows] for t in picked]
+    keys = {"bus":"bus_i","areas":"area"}.get(table)
+    return {"table":table,"column":column,"rows":rows,
+        **({keys:[(steps[0][table][n] or {}).get(keys) for n in rows]} if keys else {}),
+        "steps":len(steps),"start":start,
+        "values":[{"step":t,"label":steps[t].get("label"),"values":v} for t,v in zip(picked,values)]}
+
+def _result_tool(result,args) -> dict:
+    """Result of the `get_result` tool"""
+    if not result:
+        return {"solution":None,"note":"no solution: the case has not been solved since the "
+            "last edit (edits, undo and opening a case clear it)"}
+    table,step = args.get("table"),args.get("step")
+    if args.get("column"):
+        return _trajectory(result,table,args)
+    if table == "steps":
+        if not result.get("steps"):
+            raise CaseError("the last solution is not a multistep solution")
+        rows = [{"step":t,"label":s.get("label"),"success":s.get("success"),
+                "objective":s.get("objective"),"losses_MW":s.get("losses_MW"),
+                "dcline_losses_MW":s.get("dcline_losses_MW"),
+                "Pg_MW":sum(g.get("Pg") or 0 for g in s.get("gen") or []),
+                "Pd_MW":sum(a.get("Pd") or 0 for a in s.get("areas") or []),
+                **({"storage_MW":sum((x.get("Pdis") or 0) - (x.get("Pch") or 0)
+                        for x in s["storage"] if x.get("solved")),
+                    "stored_MWh":sum(x.get("E") or 0 for x in s["storage"] if x.get("solved"))}
+                    if any(x.get("solved") for x in s.get("storage") or []) else {})}
+            for t,s in enumerate(result["steps"])]
+        start,rows = _page(rows,args,_RESULT_ROWS)
+        return {"table":"steps","total":len(result["steps"]),"start":start,"rows":rows}
+    target = _result_step(result,step)
+    if table is None:
+        out = _result_summary(result)
+        if result.get("steps"):
+            out["step"] = {"step":int(step or 0),**{k:target.get(k) for k in ("label","success",
+                "objective","losses_MW","dcline_losses_MW","areas")}}
+    else:
+        if table not in _RESULT_TABLES:
+            raise CaseError(f"unknown result table '{table}'")
+        rows = target.get(table) or []
+        ext = target.get("extended",{}).get(table) if args.get("extended") else None
+        names = [c["name"] for c in RESULT_COLUMNS.get(table,[])]
+        out_rows = []
+        for n,row in enumerate(rows):
+            item = {"row":n,**row}
+            if ext and n < len(ext):
+                item.update({k:v for k,v in zip(names,ext[n]) if v is not None})
+            out_rows.append(item)
+        start,out_rows = _page(out_rows,args,_RESULT_ROWS)
+        out = {"table":table,"total":len(rows),"start":start,"rows":out_rows}
+        if result.get("steps"):
+            out |= {"step":int(step or 0),"label":target.get("label")}
+    if args.get("log"):
+        out["log"] = (target.get("log") or "")[-6000:]
+    return out
 
 def _clip(text):
     if len(text) <= RESULT_LIMIT:
@@ -485,15 +738,21 @@ class Session:
 
     def run_tool(self,name:str,args:dict):
         """Run one tool call; return `(result, changed)`"""
-        # pylint: disable=too-many-return-statements,too-many-branches
+        # pylint: disable=too-many-return-statements,too-many-branches,too-many-locals,too-many-statements
         editor = self.editor
         if name == "get_case":
             with editor.lock:
                 case = editor.case
+                combined = case._combined_info() # pylint: disable=protected-access
                 return {"name":case.name,"baseMVA":case.baseMVA,"version":case.version,
                     "rows":{t:len(r) for t,r in case.tables.items()},
                     "geodata_rows":len(case.geodata),"notes":case.notes,
-                    "file":editor.path,"unsaved_changes":editor.dirty},False
+                    "file":editor.path,"unsaved_changes":editor.dirty,
+                    "series":[s["name"] for s in case.series],
+                    "combined_series":{k:v for k,v in combined.items() if k != "index"}
+                        if combined else None,
+                    "issues":len(case.validate()),
+                    "solution":_result_summary(editor.result) if editor.result else None},False
         if name == "get_table":
             table = args["table"]
             if table not in COLUMNS:
@@ -540,18 +799,43 @@ class Session:
             return {"issues":issues} if issues else "no issues found",False
         if name == "solve":
             with editor.lock:
+                job = getattr(editor,"job",None)
+                if job is not None and not job.done:
+                    raise CaseError("a solve started in the editor is still running: "
+                        "wait for it to end, then read it with get_result")
                 result = editor.case.solve(args.get("kind","pf"),args.get("algorithm"),
-                    args.get("options"))
+                    args.get("options"),bool(args.get("multistep")),window=args.get("window"))
                 editor.result = result
-            return {k:result.get(k) for k in ("success","kind","algorithm","iterations","objective",
-                "losses_MW","areas","messages")} | {"log":(result.get("log") or "")[-6000:]},False
+            out = {k:result.get(k) for k in ("success","kind","algorithm","iterations","objective",
+                "losses_MW","areas","messages")}
+            if result.get("multistep"):
+                out["multistep"] = _multistep_info(result)
+                out["note"] = ("areas and objective are those of step 0; "
+                    "read every step with get_result")
+            return out | {"log":(result.get("log") or "")[-6000:]},False
         if name == "apply_result":
             def apply_result():
-                if not editor.result:
-                    raise CaseError("no solution to apply")
-                editor.case.apply_result(editor.result)
+                result = _result_step(editor.result,args.get("step"))
+                editor.case.apply_result(result)
             _,changed = self._edit(apply_result)
             return {"ok":True},changed
+        if name == "get_series":
+            with editor.lock:
+                return _series_tool(editor.case,args),False
+        if name == "get_result":
+            with editor.lock:
+                return _result_tool(editor.result,args),False
+        if name == "get_issues":
+            with editor.lock:
+                issues = editor.case.validate()
+                result = editor.result
+            last = None
+            if result:
+                last = {"kind":result.get("kind"),"algorithm":result.get("algorithm"),
+                    "success":result.get("success"),"messages":result.get("messages") or []}
+            note = {} if result else {"note":"no solution since the last edit, "
+                "so no solve messages"}
+            return {"case":issues,"last_solve":last,**note},False
         if name == "load_geodata":
             if args.get("text"):
                 n,changed = self._edit(lambda: editor.case.load_geodata("geodata.csv",args["text"]))

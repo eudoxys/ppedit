@@ -122,7 +122,10 @@ Given a case file, `ppedit.Case` is expected to satisfy:
 
 The *Agent* tab runs any number of agent sessions that read and edit the
 case through the same checked, undoable edits as the browser, optionally
-using web data or local files. The agent is chosen in the *Settings* tab
+using web data or local files. Sessions can also read the multistep time
+series, the last solution (from the page or the session, each multistep
+step included) and the Issues tab's case issues and solver messages, and
+run a multistep OPF. The agent is chosen in the *Settings* tab
 (*Agents*); the only one is Claude (`ppedit.claude`), which needs an
 Anthropic API key: the server default (`ANTHROPIC_API_KEY` or
 `~/.anthropic`), or a key or a key file on the server machine given in the
