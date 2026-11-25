@@ -327,7 +327,7 @@ flowchart LR
 Examples
 --------
 
-The [examples](https://github.com/eudoxys/ppedit/examples) folder contains 
+The [examples](https://github.com/eudoxys/ppedit/tree/main/examples) folder contains 
 example models from PyPower IEEE cases, the WECC 240 model, and the IEEE 118
 model with time-series data for multistep OPF.
 """
