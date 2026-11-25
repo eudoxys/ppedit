@@ -27,6 +27,7 @@
 - [ ] cvxopf device models (nondispatchable units, curtailable loads) and coupling between steps such as ramp limits (issue #88; DESIGN.md open questions)
 - [x] Solver errors and warnings on the Issues tab (issue #89; decision #49)
 - [x] Physical meaning and constraints of solver warnings on the Issues tab (follow-up to PR #92; decision #53)
+- [x] Agent sessions read multistep series, results (each step) and Issues-tab messages, and run multistep OPF (issue #162, decision #67)
 - [ ] Claude sessions: stream responses, persist conversations, show a diff of each session's edits
 - [ ] Multiple open cases (tabs) and a recent-files list
 

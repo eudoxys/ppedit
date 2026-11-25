@@ -401,6 +401,13 @@ API key to start sessions; tests use a fake client).
   of `/api/claude/new`. The key is resolved when the session starts, kept
   in `Session._key`, and must never appear in `to_dict()`/`summary()` or
   error messages. The routes, module and `claude-*` ids keep their names.
+  Multistep data, results and issues (decision #67, issue #162):
+  `get_series`, `get_result`, `get_issues` and `solve` `multistep`/`window`
+  (`_series_tool`, `_result_tool`, `_result_step`, `_multistep_info` in
+  `claude.py`) read `Case.series`, `Editor.result` and `messages`
+  read-only; tool step numbers count from 0 in the solved window. The
+  agent's `solve` still holds `editor.lock` but refuses while a page
+  (background) solve runs (`editor.job`), so it cannot overwrite it.
 
 ## Working rules
 

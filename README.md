@@ -339,7 +339,10 @@ In the editor:
     an error and yellow when there are only warnings.
   - **Agent**: any number of conversations with an agent (Claude), each in its own tab (the
     Anthropic Messages API) that read and edit the open case, check it and
-    run PF/OPF. Each session chooses a model and its data sources: the case
+    run PF/OPF (multistep OPF too). Sessions also read the multistep time
+    series, the last solution (whether the page or the session ran it,
+    every step of a multistep solution included) and what the Issues tab
+    lists. Each session chooses a model and its data sources: the case
     only, the web (search and public data downloads), and/or the files in
     one folder on the server machine. Every change Claude makes is one
     undoable edit and shows up in the other tabs as it happens. Needs an
