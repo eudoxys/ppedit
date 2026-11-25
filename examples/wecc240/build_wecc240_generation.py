@@ -88,6 +88,32 @@ def _decode(code):
             even = not even
     return (lat[0]+lat[1])/2,(lon[0]+lon[1])/2
 
+def _pools(members,links):
+    """Return the nodes as lists of pooled nodes: each `(code,home,k)` link
+    joins the node `code` of a generator's bus to the node `home` that holds
+    its county's generation (transitively); unlinked nodes stand alone"""
+    parent = {n:n for n in members}
+    def root(n):
+        while parent[n] != n:
+            parent[n] = parent[parent[n]]
+            n = parent[n]
+        return n
+    for a,b,_ in links:
+        parent[root(a)] = root(b)
+    pools = {}
+    for n in members:
+        pools.setdefault(root(n),[]).append(n)
+    return [sorted(p) for p in pools.values()]
+
+def _pool_report(pool,links,peak,count):
+    """Return the report line of the pooled nodes `pool`"""
+    why = []
+    for a,b in sorted({(a,b) for a,b,_ in links if a in pool}):
+        gens = ", ".join(str(k+1) for a2,b2,k in links if (a2,b2) == (a,b))
+        why.append(f"generator(s) {gens} at node {a} are in the county of node {b}")
+    return (f"nodes {' + '.join(pool)} pooled: {'; '.join(why)}; "
+        f"{peak:.0f} MW peak shared by {count} generators")
+
 def build(data,case_path,output,wecc240=WECC240,start="2020-01-01 00:00:00+00:00",
         end="2020-12-31 23:00:00+00:00",verbose=True):
     """Build the panel; return the report lines"""
@@ -117,6 +143,7 @@ def build(data,case_path,output,wecc240=WECC240,start="2020-01-01 00:00:00+00:00
     centers = {n:_decode(n) for n in node.columns}
     members = {n:[] for n in node.columns}
     storage = {n:[] for n in node.columns}
+    links = []
     for k,gen in enumerate(case.tables["gen"]):
         geo = where.get(gen[0])
         if geo is None:
@@ -126,6 +153,10 @@ def build(data,case_path,output,wecc240=WECC240,start="2020-01-01 00:00:00+00:00
         group = storage if gen[9] < 0 else members
         if code in members:
             group[code].append(k)
+            if group is members and county is not None and geo[county] not in ("",None):
+                home = county_node.get(county_st.get(int(geo[county])))
+                if home in members and home != code:
+                    links.append((code,home,k))
             continue
         if county is None or geo[county] in ("",None):
             report.append(f"gen {k+1} at bus {gen[0]}: outside the US, keeps its case Pmax {gen[8]:g} MW")
@@ -145,16 +176,22 @@ def build(data,case_path,output,wecc240=WECC240,start="2020-01-01 00:00:00+00:00
             report.append(f"node {n}: storage capacity {stored[n].max():.0f} MW peak; storage gen(s) "
                 + (", ".join(f"{k+1} ({case.tables['gen'][k][8]:g} MW)" for k in gens) or "none")
                 + " keep their case Pmax")
+    pools = _pools(members,links)
     columns = {}
-    for n,gens in members.items():
+    for pool in pools:
+        gens = [k for n in pool for k in members[n]]
+        if len(pool) > 1:
+            report.append(_pool_report(pool,links,sum(node[n] for n in pool).max(),len(gens)))
         if not gens:
-            report.append(f"node {n}: no generator, {node[n].max():.0f} MW peak not used")
+            report.append(f"node {pool[0]}: no generator, "
+                f"{node[pool[0]].max():.0f} MW peak not used")
             continue
+        series = sum(node[n] for n in pool)
         base = [case.tables["gen"][k][8] for k in gens]
         total = sum(base)
         for k,b in zip(gens,base):
             share = b/total if total > 0 else 1/len(gens)
-            columns[k+1] = (node[n]*share).round(3)
+            columns[k+1] = (series*share).round(3)
     panel = pd.DataFrame({str(k):columns[k] for k in sorted(columns)},index=node.index)
     panel.index.name = "timestamp"
     pmin = {k:case.tables["gen"][k-1][9] for k in columns}

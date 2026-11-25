@@ -172,8 +172,11 @@ column and keep their case `Pmax` (their storage rating): the node storage
 capacity is theirs, and the build report compares the two at each node. A generator is at the node with its bus's geohash; a
 US generator elsewhere goes to the node its county's generation went to
 (wecc240 `county_node_map.csv`, the county named from the bus FIPS code by
-wecc240 `counties.csv`). The 14 generators in Mexico and Canada have no
-column and keep their case `Pmax`.
+wecc240 `counties.csv`). Where a generator's bus is at one node but its
+county's generation went to another, the two nodes are pooled: their
+`Pmax(t)` is added and shared among the generators of both (see *Fixes for
+multistep SOCP OPF* below; the build report lists the 7 pools). The 14
+generators in Mexico and Canada have no column and keep their case `Pmax`.
 
 `wecc240_storage.csv` has one `storage` row per `wecc240_2020.py` generator
 with a negative `Pmin` (43 rows; they are the case's storage table, and can
@@ -194,7 +197,10 @@ these files and saves the case in place:
 
     python3 examples/wecc240/build_wecc240_2020.py [CASE] [--check]
 
-It first writes `wecc240_2020_reactive_load.csv` from the real load at
+It first leaves out the columns of `wecc240_2020_real_load.csv` at buses
+outside the US (no county FIPS code in the case geodata: 5003 and 5004),
+which keep their case `Pd` (see *Fixes for multistep SOCP OPF* below), and
+writes `wecc240_2020_reactive_load.csv` from that real load at
 each bus's power factor in the case bus table (`Qd(t) = Pd(t) Qd/Pd`, 0
 where the case `Pd` is 0; negative where the case `Qd` is). It then
 replaces the storage table with `wecc240_storage.csv` (putting each
@@ -202,11 +208,76 @@ storage generator in service with `Pmax` = `Smax`) and all series with
 `real_load` (`wecc240_2020_real_load.csv`), `reactive_load`
 (`wecc240_2020_reactive_load.csv`) and `generation` (the same hours of
 `wecc240_generation.csv.gz`). It then checks that the reactive load follows the real load at the case
-power factors, that each series reads back unchanged from its file, that the three combine by time into the 744 hours
+power factors, that no load series has a column at a bus outside the US, that each series reads back unchanged from its file, that the three combine by time into the 744 hours
 of August with no column in two series, that the panel has no column for a
 storage generator, and that the case validates; on a problem it reports it
 and does not save. `--check` only runs the checks. Run it after changing
 any of those files (after `build_wecc240_generation.py` for the panel).
+
+## Fixes for multistep SOCP OPF
+
+Multistep OPF of `wecc240_2020.py` with the SOCP relaxation (*Run OPF ▾ ›
+Multistep OPF › CVXOPF SOCP relaxation*) was infeasible: CLARABEL ended
+`infeasible` and every one of the 744 hours was infeasible by itself as a
+single-step SOCP OPF, although the case without its series solves (also
+with every load scaled down to 60%), and the copper-plate and lossy DC
+multistep OPFs solve. Two data problems in the series caused it; the build
+scripts now correct both.
+
+1. **British Columbia had almost no load.** `wecc240_2020_real_load.csv`
+   is US load (allocated from US counties), but it had a column for bus
+   5003 (CA230TO, BC Hydro), which is in Canada: 24 to 32 MW in every hour,
+   where the case has 8,803 MW. The other buses outside the US (5001
+   BC Hydro, 5002 AESO, 2000 CENACE) have no column and keep their case
+   `Pd`. With BC's load (and its reactive load, which follows it) removed, the
+   charging of the lightly loaded lines raises the voltages of the British
+   Columbia network above `Vmax`, and the generators at 5003 (rows 503 and 512, `Qmin` =
+   `Qmax` = 0) cannot absorb reactive power, so no voltage profile within
+   the limits exists (widening `Vmax` to 1.3 pu or the generator Q limits
+   made those hours feasible; widening branch ratings did not). The DC
+   models have no voltages or reactive power, so they still solved.
+   `build_wecc240_2020.py` now leaves out the real load columns of buses
+   outside the US (and so their reactive load), so 5003 keeps its case
+   `Pd` and `Qd` like the other foreign buses, and its check fails if a
+   load series has such a column. The real load file itself is unchanged.
+2. **Las Vegas generation was moved to Hoover.** The node data of
+   eudoxys/generation are county totals placed at the node that
+   `county_node_map.csv` gives each county. Clark County, Nevada (Las Vegas,
+   with the Harry Allen and Hoover buses) goes to the Hoover/Mead node
+   `9qqk6u` (up to 12.7 GW of `Pmax` in August 2020), while the Harry
+   Allen node `9qw0kp` gets only Lincoln and Nye counties, Nevada, and
+   Washington County, Utah (at most 151 MW in August 2020). The
+   generators at bus 1333 (H ALLEN, 3,750 MW in the case) are at `9qw0kp`
+   by geohash, so together
+   they got 142 MW on average and at most 151 MW (row 277: 3,666 MW in the
+   case, about 139 MW in the panel), while the Hoover generators at bus 1331 got about twice
+   their case `Pmax`. The southern Nevada load at bus 1303 (up to 5.5 GW
+   in August) then had to be imported, mostly over the 1,500 MVA branch
+   1302-1303 behind the 1,630 MVA branch 1301-1302, which the SOCP model
+   could not do within its branch limits (with the first fix applied,
+   hours 0 and 430 were still infeasible, and at hour 0 relaxing just these
+   two ratings made it feasible; the lossy DC multistep OPF, with the same
+   ratings but no voltages or reactive power, solved). `build_wecc240_generation.py` now
+   pools a generator's bus node with the node that holds its county's
+   generation: the pooled `Pmax(t)` is the sum of the nodes' and is shared
+   among all their generators in proportion to case `Pmax`, so no node
+   capacity is lost or moved between counties. Seven node pairs are pooled
+   (Los Angeles, San Luis Obispo, Fresno, Clark, Shasta, San Juan and Grant
+   counties); in August 2020, row 277 now averages 4,460 MW and rows 271
+   and 272 at Hoover about 2,530 MW and 2,660 MW (case 2,079 MW and
+   2,188 MW). Pooling instead of moving such generators to their county's
+   node keeps the capacity of nodes that would be left with no generator
+   (the San Juan node `9we1bp`, up to 568 MW in 2020).
+
+With both fixes the 744-hour multistep SOCP OPF solves (CLARABEL, default
+preparation and solver options: about 8 minutes and more than 5 GB of
+memory; CLARABEL warns that the solution may be inaccurate), and so do the
+lossy DC and
+copper-plate multistep OPFs. As single-step SOCP OPFs, 742 of the 744 hours
+solve with the default settings; CLARABEL fails numerically (not
+`infeasible`) on hours 187 and 466 (2020-08-08 19:00 and 2020-08-20 10:00
+UTC), which solve with the `recommended` preparation or with the solver
+option `equilibrate_max_iter=50`.
 
 ## References
 

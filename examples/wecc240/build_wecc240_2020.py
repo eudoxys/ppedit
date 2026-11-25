@@ -2,10 +2,13 @@
 
 Syntax: python3 examples/wecc240/build_wecc240_2020.py [CASE] [--check]
 
-First writes `wecc240_2020_reactive_load.csv` from
-`wecc240_2020_real_load.csv` at the power factor of each bus in the case
-bus table: `Qd(t) = Pd(t) * Qd / Pd` (0 where the case `Pd` is 0), rounded
-to 4 decimals like the real load. Then rebuilds, in `CASE` (default
+The real load of `wecc240_2020_real_load.csv` is US load only: its columns
+at buses outside the US (no county FIPS code in the case geodata; bus 5003
+of BC Hydro) are left out, so those buses keep their case `Pd` like the
+other buses outside the US (`real_load`). First writes
+`wecc240_2020_reactive_load.csv` from that real load at the power factor
+of each bus in the case bus table: `Qd(t) = Pd(t) * Qd / Pd` (0 where the
+case `Pd` is 0), rounded to 4 decimals like the real load. Then rebuilds, in `CASE` (default
 `examples/wecc240/wecc240_2020.py`), the data that comes from the other `examples/wecc240/`
 files, and saves the case in place:
 
@@ -13,7 +16,8 @@ files, and saves the case in place:
      storage generator (`gen_i`) is put in service with `Pmax` = `Smax`.
   2. Time series (replacing all series), aligned on the hours of
      `wecc240_2020_real_load.csv`:
-       - `real_load`: bus `Pd` by hour (`wecc240_2020_real_load.csv`);
+       - `real_load`: bus `Pd` by hour (`wecc240_2020_real_load.csv`,
+         US buses only);
        - `reactive_load`: bus `Qd` by hour (`wecc240_2020_reactive_load.csv`);
        - `generation`: generator `Pmax` by hour, the same hours of the
          panel `wecc240_generation.csv.gz` (columns are gen rows; the
@@ -21,7 +25,9 @@ files, and saves the case in place:
          `build_wecc240_generation.py`).
 
 Then it checks that the reactive load follows the real load at the case
-power factors, that every series reads back unchanged from its file, that
+power factors, that no load series has a column at a bus outside the US,
+that every series reads back unchanged from its file (the real load
+without those columns), that
 the three combine by time into one horizon with no column given twice, and
 that the case validates without errors. `--check` runs only the checks,
 without changing or saving the case.
@@ -52,6 +58,30 @@ def _read(name):
     with open(os.path.join(HERE,name),"rb") as fh:
         return read_series(name,fh.read())
 
+def foreign_buses(case):
+    """Return the buses outside the US: those whose first geodata row has no county FIPS code"""
+    county = case.geotags.index("COUNTY") + 3
+    first = {}
+    for row in case.geodata:
+        first.setdefault(row[0],row)
+    return {b for b,row in first.items() if row[county] in ("",None)}
+
+def real_load(case):
+    """Return the step labels, columns and rows of `wecc240_2020_real_load.csv`
+    without the columns of buses outside the US, and the buses left out
+
+    The real load is US load only (no Canadian or Mexican data): a column at
+    a bus outside the US holds at most the US load placed there, so those
+    buses keep their case `Pd` like the foreign buses the file has no column
+    for (bus 5003 of BC Hydro has 8,803 MW in the case but 24-32 MW in the
+    file, which leaves the British Columbia network nearly unloaded and makes
+    the SOCP relaxation infeasible at the voltage limits)"""
+    index,columns,rows = _read(SERIES[0][1])
+    foreign = foreign_buses(case)
+    keep = [j for j,c in enumerate(columns) if int(c.split(".")[2]) not in foreign]
+    dropped = [int(c.split(".")[2]) for j,c in enumerate(columns) if j not in keep]
+    return index,[columns[j] for j in keep],[[r[j] for j in keep] for r in rows],dropped
+
 def reactive_ratios(case,columns):
     """Return the case `Qd/Pd` of the buses of the real load `columns` (0 where `Pd` is 0)"""
     bus = {r[0]:r for r in case.tables["bus"]}
@@ -63,7 +93,7 @@ def reactive_ratios(case,columns):
 
 def write_reactive(case):
     """Write `wecc240_2020_reactive_load.csv` from the real load at the case power factors"""
-    index,columns,rows = _read(SERIES[0][1])
+    index,columns,rows,_ = real_load(case)
     ratio = reactive_ratios(case,columns)
     with open(os.path.join(HERE,SERIES[1][1]),"w",newline="",encoding="utf-8") as fh:
         out = csv.writer(fh,lineterminator="\n")
@@ -89,7 +119,7 @@ def load_series(case):
         case.set_series(None,name=ser["name"])
     hours = None
     for name,filename in SERIES:
-        index,columns,rows = _read(filename)
+        index,columns,rows = real_load(case)[:3] if name == SERIES[0][0] else _read(filename)
         if hours is None:
             hours = index
         elif index != hours:
@@ -101,6 +131,16 @@ def load_series(case):
     if index != hours:
         raise ValueError(f"{filename} does not hold the hours {hours[0]} to {hours[-1]}")
     case.set_series_panel(table,column,columns,rows,index,1.0,keys_are="row",merge=False,name=name)
+
+def check_foreign(case):
+    """Return a problem for each load series with a column at a bus outside the US"""
+    foreign = foreign_buses(case)
+    problems = []
+    for name,_ in SERIES:
+        columns = (case.get_series(name) or {"columns":[]})["columns"]
+        if any(int(c.split(".")[2]) in foreign for c in columns):
+            problems.append(f"series {name} has columns for buses outside the US")
+    return problems
 
 def check(case):
     """Return a list of problems with the storage, series and validation of `case`"""
@@ -120,7 +160,7 @@ def check(case):
         problems.append(f"series are {names}")
     for name,filename in SERIES:
         ser = case.get_series(name)
-        index,columns,rows = _read(filename)
+        index,columns,rows = real_load(case)[:3] if name == SERIES[0][0] else _read(filename)
         if ser is None or ser["index"] != index or ser["columns"] != columns \
                 or not all(same(a,b) for a,b in zip(ser["values"],rows)) or not ser["timed"]:
             problems.append(f"series {name} differs from {filename}")
@@ -133,6 +173,7 @@ def check(case):
     if not ser or ser["index"] != index or set(got) != set(want) \
             or not all(same(got[c],want[c]) for c in want):
         problems.append(f"series {PANEL[0]} differs from {PANEL[1]}")
+    problems += check_foreign(case)
     stores = {int(r[0]) for r in case.tables["storage"]}
     if any(int(c.split(".")[2]) in stores for c in got):
         problems.append(f"series {PANEL[0]} has columns for storage generators")
@@ -161,6 +202,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     case = Case.load(args.case)
     if not args.check:
+        dropped = real_load(case)[3]
+        if dropped:
+            print(f"{SERIES[0][1]}: left out the columns of buses outside the US "
+                f"(they keep their case Pd): {', '.join(map(str,dropped))}")
         write_reactive(case)
         print(f"wrote {SERIES[1][1]}")
         print(f"storage: {load_storage(case)} rows")
