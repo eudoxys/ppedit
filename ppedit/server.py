@@ -120,13 +120,15 @@ open case was read, see `ppedit.Case.source`, or `null`), and `loads_off`
     `<case>_<name>.<format>` (`<case>_series.<format>` combined)
   - `POST /api/undo`, `POST /api/redo`
   - `POST /api/solve`: `{"kind": "pf"|"opf", "algorithm"?, "options"?,
-    "multistep"?}`;
+    "multistep"?, "window"?}`;
     `algorithm` is a PF algorithm (`NR`, the default, `FDXB`, `FDBX`, `GS`)
     or an OPF solver (`PIPS`, the default, `PIPS-SC`, `DC-PIPS`, ...; see
     `ppedit.case.OPF_SOLVERS`); `options` are the `CVXOPF-*` solve options
     (see `ppedit.Case.solve`); `multistep` true solves the case time
     series as one multistep OPF with a `CVXOPF-*` solver (the result has
-    `steps`). The result's `messages` (solver errors and
+    `steps`), over the combined series steps `window` = `[first, last]`
+    (counted from 0, both included; default all steps; see
+    `ppedit.Case.series_window`). The result's `messages` (solver errors and
     warnings, with an optional `detail`: physical meaning and constraints
     involved) are listed on the page's Issues tab. With `"background":
     true` the request returns the state at once with `solving` true and
@@ -921,7 +923,7 @@ def create_app(case:Case|None=None,path:str|None=None,allow_remote:bool=False,
         def run():
             result,error = None,None
             try:
-                result = case.solve(*args,job=job)
+                result = case.solve(*args[:4],job=job,window=args[4])
             except Exception as err: # pylint: disable=broad-exception-caught
                 error = str(err) if isinstance(err,(CaseError,ValueError)) else f"{type(err).__name__}: {err}"
             with editor.lock:
@@ -940,7 +942,8 @@ def create_app(case:Case|None=None,path:str|None=None,allow_remote:bool=False,
     @app.post("/api/solve")
     def solve():
         data = body()
-        args = (data.get("kind","pf"),data.get("algorithm"),data.get("options"),bool(data.get("multistep")))
+        args = (data.get("kind","pf"),data.get("algorithm"),data.get("options"),bool(data.get("multistep")),
+            data.get("window"))
         with editor.lock:
             if editor.job is not None and not editor.job.done:
                 raise SolveBusy("a solve is already running: wait for it or stop it")
@@ -948,7 +951,7 @@ def create_app(case:Case|None=None,path:str|None=None,allow_remote:bool=False,
                 return jsonify(dict(editor.state(),solving=True,**start_background_solve(args)))
             job = editor.job = SolveJob()
             try:
-                editor.result = editor.case.solve(*args,job=job)
+                editor.result = editor.case.solve(*args[:4],job=job,window=args[4])
             finally:
                 job.done = True
             return jsonify(editor.state())

@@ -18,6 +18,7 @@ const S = {
   step: 0,             // step of a multistep solution shown (issue #124, stepView)
   seriesName: null,    // series shown on the Multistep tab ("" = all combined; currentSeries)
   seriesStep: { on: false, step: 0 }, // step chosen on the Multistep tab (renderSeriesStep; combined steps from 0)
+  seriesWindow: null,  // combined steps a multistep OPF solves: {first, last, key} (renderSeriesWindow, issue #157)
   stepsTab: "data",    // Results Steps block: "data" (table) or "plot" (stepsPlot)
   seriesTab: "data",   // Multistep tab series view: "data" (table) or "plot" (seriesPlot)
   seriesCols: {},      // series name -> column names shown (seriesShown; default: the SERIES_COLS largest)
@@ -350,7 +351,9 @@ function renderChrome() {
     b.disabled = !comb || !!comb.error;
     b.title = !comb ? "Import a time series on the Multistep tab first"
       : comb.error ? `The series cannot be combined: ${comb.error}`
-      : `Solve the ${comb.steps} steps of the ${c.series.length > 1 ? `${c.series.length} combined series` : "time series"} as one OPF`;
+      : (w => w.first > 0 || w.last < comb.steps - 1
+        ? `Solve steps ${w.first + 1} to ${w.last + 1} (${comb.index[w.first]} to ${comb.index[w.last]}) of the ${comb.steps} steps of the ${c.series.length > 1 ? `${c.series.length} combined series` : "time series"} as one OPF (window set on the Multistep tab)`
+        : `Solve the ${comb.steps} steps of the ${c.series.length > 1 ? `${c.series.length} combined series` : "time series"} as one OPF`)(seriesWindow());
   });
   // Issues tab: case issues plus the last solve's messages (issue #89); red
   // dot for errors, yellow for warnings only
@@ -624,6 +627,63 @@ function renderSeriesStep() {
     h("button", { disabled: off, title: "Copy every series value of this step (all series combined) into the case tables (Ctrl+Z to undo)",
       onclick: () => copyStepToCase().catch(() => { /* toast already shown */ }) }, "Copy to case"));
 }
+// Multistep OPF window (issue #157): start and stop of the combined steps the
+// Run OPF ▾ multistep solvers solve, chosen with date/time inputs when every
+// combined label is a date and time (else step number spinners) and limited
+// to the series range; Full range resets it. Page state (S.seriesWindow), kept
+// while the combined series keeps its steps and labels (seriesWindowKey).
+function seriesWindowKey(comb) { return `${comb.steps}|${comb.first}|${comb.last}`; }
+// the window {first, last} of combined steps (all steps by default), or null without a usable series
+function seriesWindow() {
+  const comb = S.state && S.state.case.series_combined;
+  if (!comb || comb.error) return null;
+  const key = seriesWindowKey(comb), w = S.seriesWindow;
+  if (!w || w.key !== key || w.last >= comb.steps) S.seriesWindow = { first: 0, last: comb.steps - 1, key };
+  return S.seriesWindow;
+}
+function setSeriesWindow(first, last) {
+  const comb = S.state.case.series_combined, w = seriesWindow(), end = comb.steps - 1;
+  w.first = Math.max(0, Math.min(end, first));
+  w.last = Math.max(w.first, Math.min(end, last));
+  renderSeries();
+  renderChrome();
+}
+function renderSeriesWindow() {
+  const box = $("#series-window"), comb = S.state.case.series_combined, w = seriesWindow();
+  box.hidden = !w;
+  if (!w) return box.replaceChildren();
+  const times = stepTimes(comb), end = comb.steps - 1, full = w.first === 0 && w.last === end;
+  // a typed time maps to the first step at or after it (start) or the last at or before it (stop)
+  const atOrAfter = v => { const i = times.findIndex(x => x >= v); return i < 0 ? end : i; };
+  const atOrBefore = v => { let i = end; while (i > 0 && times[i] > v) i--; return i; };
+  const field = (which, label) => {
+    const at = w[which], other = which === "first" ? w.last : w.first;
+    const set = n => which === "first" ? setSeriesWindow(n, Math.max(n, w.last)) : setSeriesWindow(Math.min(n, w.first), n);
+    const narrowed = which === "first" ? at > 0 : at < end;
+    if (times) {
+      return h("label", { class: "inline" }, `${label} `, h("input", { type: "datetime-local", class: narrowed ? "narrowed" : null,
+        value: times[at], min: times[0], max: times[end], step: Math.max(60, Math.round(comb.delta * 3600)), required: true,
+        "aria-label": `Multistep OPF ${label.toLowerCase()} date and time`, onchange: e => {
+          const v = e.target.value.slice(0, 16);
+          if (!STEP_TIME.test(v)) return (e.target.value = times[at]);  // cleared or invalid: keep the step
+          // outside the series: its first or last step
+          set(v < times[0] ? 0 : v > times[end] ? end : which === "first" ? atOrAfter(v) : atOrBefore(v));
+        } }));
+    }
+    return h("label", { class: "inline" }, `${label} step `, h("input", { type: "number", class: "num" + (narrowed ? " narrowed" : ""),
+      value: at + 1, min: 1, max: comb.steps, step: 1, "aria-label": `Multistep OPF ${label.toLowerCase()} step`, onchange: e => {
+        const n = Math.round(Number(e.target.value));
+        if (Number.isFinite(n) && e.target.value !== "") set(n - 1); else e.target.value = at + 1;
+      } }));
+  };
+  const n = w.last - w.first + 1;
+  box.replaceChildren(
+    h("span", { class: "window-title", title: "The steps Run OPF ▾ › Multistep OPF solves (all series combined)" }, "Multistep OPF window"),
+    field("first", "Start"), field("last", "Stop"),
+    h("button", { disabled: full, title: "Solve all steps of the series again", onclick: () => setSeriesWindow(0, end) }, "Full range"),
+    h("span", { class: "step-label" }, full ? `all ${comb.steps} step(s): ${comb.index[0]} to ${comb.index[end]}`
+      : `${n} of ${comb.steps} step(s): ${comb.index[w.first]} to ${comb.index[w.last]}`));
+}
 async function copyStepToCase() {
   const st = await act("/api/series/apply", { step: S.seriesStep.step });
   const a = st.applied;
@@ -631,6 +691,7 @@ async function copyStepToCase() {
 }
 function renderSeries() {
   const all = S.state.case.series, comb = S.state.case.series_combined, exts = S.meta.table_formats || [];
+  renderSeriesWindow();
   renderSeriesStep();
   const ser = currentSeries();
   const pick = $("#series-pick");
@@ -650,7 +711,8 @@ function renderSeries() {
     ser ? `${ser.values.length} step(s) × ${ser.columns.length} value(s)${ser.timed ? "" : ", no time labels"}. ` : "",
     comb.error ? h("span", { class: "err-text" }, `Multistep OPF: ${comb.error}`)
       : `Multistep OPF uses ${comb.steps} step(s) × ${comb.columns} value(s)` + (all.length > 1 ? ` from ${all.length} series, aligned by ${comb.aligned === "time" ? "time" : "step number"}` : "")
-        + (comb.summed ? `, ${comb.summed} value(s) summed over series` : "") + `, ${comb.first} to ${comb.last}.`]));
+        + (comb.summed ? `, ${comb.summed} value(s) summed over series` : "") + `, ${comb.first} to ${comb.last}`
+        + ((w => w && (w.first > 0 || w.last < comb.steps - 1) ? `; the window below solves steps ${w.first + 1} to ${w.last + 1}.` : ".")(seriesWindow()))]));
   const format = h("div", { class: "hint series-format" },
     "A series file has one row per time step: an optional label column (named time, timestamp, date, step or index) ",
     "and one column per value named table.column.key — bus.Pd.N and bus.Qd.N for bus number N, gen.Pmin.N and gen.Pmax.N ",
@@ -3407,7 +3469,7 @@ function stepPicker(r) {
     h("button", { title: "Previous step", disabled: r.step === 0, onclick: () => setStep(r.step - 1) }, "◀"),
     sel,
     h("button", { title: "Next step", disabled: r.step === n - 1, onclick: () => setStep(r.step + 1) }, "▶"),
-    h("span", { class: "hint" }, `of ${n}, ${m.delta} h each; the diagram and table solution columns show this step (loads drawn on the diagram are the case values; see the Multistep tab)`));
+    h("span", { class: "hint" }, `of ${n}, ${m.delta} h each` + (m.window && m.total && n < m.total ? ` (steps ${m.window[0] + 1} to ${m.window[1] + 1} of the ${m.total}-step series)` : "") + `; the diagram and table solution columns show this step (loads drawn on the diagram are the case values; see the Multistep tab)`));
 }
 function stepTable(r) {
   // with modeled storage: net storage output (discharge - charge) and energy stored at the step's end
@@ -4184,7 +4246,11 @@ function solveRequest(kind, algorithm, multistep = false) {
   const req = { kind };
   if (algorithm) req.algorithm = algorithm;
   if (kind === "opf" && algorithm && algorithm.startsWith("CVXOPF-")) req.options = cvxopfOptions(multistep);
-  if (multistep) req.multistep = true;
+  if (multistep) {
+    req.multistep = true;
+    const w = seriesWindow(), comb = S.state.case.series_combined;  // only a narrowed window is sent (issue #157)
+    if (w && (w.first > 0 || w.last < comb.steps - 1)) req.window = [w.first, w.last];
+  }
   return req;
 }
 

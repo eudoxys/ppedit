@@ -164,7 +164,7 @@ def test_multistep_solves(algorithm):
     case = _case9_series()
     r = case.solve("opf",algorithm,multistep=True)
     assert r["success"] and r["multistep"] == {"steps":3,"delta":1.0,"index":["00:00","01:00","02:00"],
-        "series":["series"]}
+        "series":["series"],"window":[0,2],"total":3}
     assert [s["label"] for s in r["steps"]] == ["00:00","01:00","02:00"]
     assert r["gen"] == r["steps"][0]["gen"] and "messages" not in r["steps"][0]
     pd = [sum(a["Pd"] for a in s["areas"]) for s in r["steps"]]
@@ -227,6 +227,62 @@ def test_server_multistep_apply(post):
     status,st = post("/api/solve",{"kind":"opf","algorithm":"CVXOPF-DC","multistep":True})
     status,st = post("/api/apply",{"step":5})
     assert status == 400 and "no step 6" in st["error"]
+
+# ----- multistep window (issue #157) -----
+
+def test_series_window():
+    """The window defaults to all steps and must lie within the series"""
+    case = _case9_series()
+    assert case.series_window() == (0,2)
+    assert case.series_window([1,2]) == (1,2) and case.series_window((2.0,2)) == (2,2)
+    for bad in ([2,1],[-1,1],[0,3],[0],["a","b"],[0.5,1],[True,2],5):
+        with pytest.raises(CaseError,match="window"):
+            case.series_window(bad)
+    with pytest.raises(CaseError,match="no time series"):
+        Case.builtin("case9").series_window()
+    ser = case._series_input([1,2]) # pylint: disable=protected-access
+    assert ser["T"] == 2 and ser["first"] == 1 and ser["steps"] == 3 and ser["index"] == ["01:00","02:00"]
+    assert [row[4] for row in ser["Pd"]] == [120,150]
+
+def test_series_window_pmin_step_number():
+    """A Pmin > Pmax step inside the window is reported by its series step number"""
+    case = Case.builtin("case9")
+    case.set_series(["gen.Pmin.1"],[[0],[0],[300]])
+    with pytest.raises(CaseError,match="step 3.*gen 1 has Pmin 300"):
+        case._series_input([1,2]) # pylint: disable=protected-access
+    assert case._series_input([0,1])["T"] == 2 # pylint: disable=protected-access
+
+@needs_cvxopf
+def test_multistep_window():
+    """A window solves only its steps, each with its own series values"""
+    case = _case9_series()
+    full = case.solve("opf","CVXOPF-DC",multistep=True)
+    r = case.solve("opf","CVXOPF-DC",multistep=True,window=[1,2])
+    assert r["success"] and r["multistep"]["window"] == [1,2] and r["multistep"]["total"] == 3
+    assert r["multistep"]["steps"] == 2 and r["multistep"]["index"] == ["01:00","02:00"]
+    assert [s["label"] for s in r["steps"]] == ["01:00","02:00"]
+    pd = [sum(a["Pd"] for a in s["areas"]) for s in r["steps"]]
+    assert pd == pytest.approx([385,435])
+    for a,b in zip(r["steps"],full["steps"][1:]):
+        assert a["objective"] == pytest.approx(b["objective"],rel=1e-4)
+    assert r["steps"][1]["gen"][2]["Pg"] <= 60 + 1e-3
+    assert "Step 1 of 2 (01:00)" in r["steps"][0]["log"]
+    assert full["multistep"]["window"] == [0,2] and full["multistep"]["total"] == 3
+    with pytest.raises(CaseError,match="window"):
+        case.solve("opf","CVXOPF-DC",multistep=True,window=[0,5])
+
+@needs_cvxopf
+def test_server_multistep_window(post):
+    """POST /api/solve takes the window; apply uses the windowed steps"""
+    text = "time,bus.Pd.5\n2026-01-01T00:00,90\n2026-01-01T01:00,120\n2026-01-01T02:00,150\n"
+    post("/api/series/import",{"filename":"load.csv","data":_b64(text)})
+    status,st = post("/api/solve",{"kind":"opf","algorithm":"CVXOPF-DC","multistep":True,"window":[2,2]})
+    assert status == 200 and len(st["result"]["steps"]) == 1
+    assert st["result"]["steps"][0]["label"] == "2026-01-01T02:00"
+    status,st = post("/api/apply",{"step":0})
+    assert status == 200
+    status,st = post("/api/solve",{"kind":"opf","algorithm":"CVXOPF-DC","multistep":True,"window":[1,3]})
+    assert status == 400 and "window" in st["error"]
 
 # ----- panels: steps in rows, row numbers or geohashes in columns -----
 
