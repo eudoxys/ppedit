@@ -894,7 +894,9 @@ def runopf(ppc:dict,formulation:str,log,options:dict|None=None,series:dict|None=
         report({"phase":"results","text":"reading the results"})
         res = extract_results(build)
         stored = None
-        if units:  # take the charging generators out of the results
+        # take the charging generators out of the results; a failed solve may
+        # have no Pg to reshape, so its status is reported instead (issue #160)
+        if units and res["status"] in ACCEPTED_SOLVER_STATUSES:
             ng = int(gkeep.sum())
             pgs = np.asarray(res["Pg"],dtype=float).reshape(int(series["T"]),-1)
             stored = {"dis":pgs[:,[u["k"] for u in units]],"ch":-pgs[:,ng:],

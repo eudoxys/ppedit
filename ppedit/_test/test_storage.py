@@ -126,6 +126,20 @@ def test_storage_needs_multistep_and_default_preparation():
         case.solve("opf","CVXOPF-DC",{"preparation":"recommended"},multistep=True)
 
 @needs_cvxopf
+@pytest.mark.parametrize("algorithm",["CVXOPF-AC","CVXOPF-SOCP","CVXOPF-DC","CVXOPF-1NODE"])
+def test_storage_failed_solve_reports_status(algorithm):
+    """An infeasible multistep solve with storage reports the solver status,
+    not an error from reading the storage results (issue #160)"""
+    case = _case({"Eend":0})
+    case.set_series(["bus.Pd.5","bus.Pd.7","bus.Pd.9"],[[b*5 for b in (90,100,125)]]*4,
+        ["a","b","c","d"],name="load")
+    r = case.solve("opf",algorithm,multistep=True)
+    assert not r["success"]
+    assert not any("reshape" in m["message"] for m in r["messages"])
+    assert any("solver status" in m["message"] for m in r["messages"])
+    assert all(s["storage"][0]["solved"] is False for s in r["steps"])
+
+@needs_cvxopf
 def test_storage_out_of_service_generator():
     """Storage on an out-of-service generator is left out with a note, not an error"""
     case = _case({"Eend":0},gen_status=0)
